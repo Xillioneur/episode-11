@@ -1,13 +1,14 @@
 // ======================================================================
-// Parry the Storm – Ashes of the Bullet (Dark Souls Edition)
-// Episode 11: The Ultimate Trial – Bullet Hell with True Soulslike Punishment
-// Collect souls, level up at bonfire, lose everything on death. Git Gud.
+// Lumen Fidei – The Shield of Saints
+// A Spiritual Defense Arcade Game
 // ======================================================================
+
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <vector>
 #include <string>
+#include <deque>
 #include <cmath>
 #include <algorithm>
 #include <random>
@@ -19,42 +20,52 @@
 #include <functional>
 #include <future>
 #include <atomic>
-
-const int SCREEN_WIDTH = 1440;
-const int SCREEN_HEIGHT = 810;
-
-// Tuned for punishing difficulty
-const float PLAYER_BASE_SPEED = 8.2f;
-const float SPRINT_MULTIPLIER = 1.65f;
-const float ROLL_SPEED = 22.0f;
-const float ROLL_DURATION = 0.30f;
-const float ROLL_RECOVERY = 0.35f;
-const float ROLL_COST = 32.0f;
-const float SHOOT_RATE_BASE = 0.14f;
-const float PLAYER_BULLET_SPEED_BASE = 35.0f;
-const float ENEMY_BULLET_SPEED = 20.0f;
-const float PARRY_WINDOW_BASE = 0.22f;
-const float PARRY_RANGE = 7.0f;
-const float PARRY_COST = 35.0f;
-const int BASE_MAX_HEALTH = 80;
-const int BASE_MAX_STAMINA = 140;
-const float STAMINA_REGEN_BASE = 28.0f;
-const int MAX_FLASKS = 5;
-const float FLASK_HEAL_BASE = 35.0f;
-const float FLASK_TIME = 1.3f;
-const float CAMERA_HEIGHT = 38.0f;
-const float CAMERA_DISTANCE = 28.0f;
-const float CAMERA_SMOOTH = 12.0f;
-
-const float BULLET_LIFETIME = 5.5f;
-const float BULLET_SIZE = 0.65f;
-const float PERFECT_PARRY_BONUS = 2.8f;
-
-const int UPGRADE_COST_BASE = 300;
-const int UPGRADE_COST_MULTIPLIER = 180;
+#include <iostream>
 
 // ======================================================================
-// Thread Pool
+// Constants & Configuration
+// ======================================================================
+const int SCREEN_WIDTH = 1440;
+const int SCREEN_HEIGHT = 900;
+
+// Gameplay Constants
+const float PLAYER_SPEED = 9.0f;
+const float DASH_SPEED = 24.0f;
+const float DASH_DURATION = 0.25f;
+const float DASH_COST = 25.0f;
+
+// Stats
+const float BASE_MAX_GRACE = 100.0f;   // Health
+const float BASE_MAX_SPIRIT = 100.0f;  // Stamina/Energy
+const float SPIRIT_REGEN = 15.0f;
+const float SPIRIT_DRAIN_SHIELD = 12.0f; // Cost per second to hold shield
+
+// Mechanics
+const float SHIELD_ARC = 110.0f * DEG2RAD; 
+const float PARRY_WINDOW = 0.22f; 
+const float WORD_RADIUS = 14.0f;  
+const float WORD_COST = 35.0f;
+const float WORD_COOLDOWN = 1.0f;
+
+const float CLARITAS_COST = 500.0f; // Merit cost
+const float CLARITAS_DURATION = 5.0f;
+const float CLARITAS_SLOW_FACTOR = 0.25f;
+
+// Camera
+const float CAMERA_HEIGHT = 44.0f;
+const float CAMERA_DISTANCE = 34.0f;
+
+// Colors (Ethereal Palette)
+const Color COL_GRACE = { 255, 245, 180, 255 }; 
+const Color COL_SPIRIT = { 130, 220, 255, 255 }; 
+const Color COL_VICE = { 35, 30, 45, 255 };     
+const Color COL_TEMPTATION = { 220, 20, 60, 255 }; 
+const Color COL_TRUTH = { 240, 255, 255, 255 };  
+const Color COL_ALTAR = { 255, 215, 0, 255 };  
+const Color COL_BOSS = { 120, 40, 180, 255 };  // Royal Purple for Pride
+
+// ======================================================================
+// Thread Pool (Unchanged utility)
 // ======================================================================
 class ThreadPool {
 public:
@@ -110,19 +121,26 @@ private:
 // ======================================================================
 // Enums & Structs
 // ======================================================================
-enum GameState { TITLE, PLAYING, BONFIRE, PAUSED, DEAD, VICTORY };
-enum EnemyType { GRUNT, SPIRAL, WALL, RAPID, SHIELDED, BOSS };
+enum GameState { STATE_TITLE, STATE_VIGIL, STATE_ALTAR, STATE_DESOLATION, STATE_ASCENSION };
+enum ViceType { WHISPERER, ACCUSER, RAGER, CARDINAL_SIN };
 
-struct Bullet {
+struct Temptation {
     Vector3 pos;
     Vector3 vel;
     Color color;
     float life;
-    bool playerBullet = false;
+    bool isTruth = false; // "Truth" is a converted temptation (player projectile)
     bool reflected = false;
+    std::deque<Vector3> trail;
 };
 
-struct Particle {
+struct LoveHeart {
+    Vector3 pos;
+    float life;
+    float floatOffset;
+};
+
+struct LightMote {
     Vector3 pos;
     Vector3 vel;
     float life;
@@ -131,1191 +149,898 @@ struct Particle {
     float size;
 };
 
-struct SoulOrb {
-    Vector3 pos;
-    float timer;
-};
-
-struct Player {
+struct Guardian {
     Vector3 pos {0,0,0};
-    float rotation = 0.0f;
-    int health = BASE_MAX_HEALTH;
-    int maxHealth = BASE_MAX_HEALTH;
-    float stamina = BASE_MAX_STAMINA;
-    int maxStamina = BASE_MAX_STAMINA;
-    int flasks = 0;
-    float shootCD = 0.0f;
-    float shootRate = SHOOT_RATE_BASE;
-    float bulletSpeed = PLAYER_BULLET_SPEED_BASE;
-    bool isRolling = false;
-    float rollTimer = 0.0f;
-    float recoveryTimer = 0.0f;
-    Vector3 rollDir {0,0,0};
-    bool isParrying = false;
-    float parryTimer = 0.0f;
-    float parryWindow = PARRY_WINDOW_BASE;
-    float hitInvuln = 0.0f;
-    float healTimer = 0.0f;
-    bool isHealing = false;
-    std::atomic<int> score {0};
-    std::atomic<int> combo {0};
-    std::atomic<int> souls {0};
-    int vitality = 0;
-    int endurance = 0;
-    int strength = 0;
-    int dexterity = 0;
-    float shake = 0.0f;
+    float facingAngle = 0.0f; 
+    
+    // The Father: Grace & Infinite Love
+    float grace = BASE_MAX_GRACE;
+    float maxGrace = BASE_MAX_GRACE;
+    
+    // The Son: Truth & Mercy
+    float spirit = BASE_MAX_SPIRIT;
+    float maxSpirit = BASE_MAX_SPIRIT;
+    bool isSwinging = false;
+    float swingTimer = 0.0f;
+    float swingDuration = 0.45f;
+    float swingArc = 140.0f * DEG2RAD;
+    float swingRange = 10.0f;
+    
+    // Sign of the Cross
+    bool isCrossing = false;
+    float crossTimer = 0.0f;
+    float crossDuration = 0.7f;
+    
+    // The Holy Spirit: Praise & Joy
+    float fervor = 0.0f;
+    float maxFervor = 1000.0f;
+    
+    // Mechanics
+    bool isShielding = false;
+    float shieldTimer = 0.0f; 
+    float wordCooldown = 0.0f; 
+    float claritasTimer = 0.0f; 
+    
+    // Movement
+    bool isDashing = false;
+    float dashTimer = 0.0f;
+    Vector3 dashDir {0,0,0};
+    float hitStun = 0.0f;
+    
+    // Progression
+    std::atomic<int> merit {0}; 
 
     void reset() {
         pos = {0,0,0};
-        rotation = 0.0f;
-        health = BASE_MAX_HEALTH;
-        maxHealth = BASE_MAX_HEALTH;
-        stamina = BASE_MAX_STAMINA;
-        maxStamina = BASE_MAX_STAMINA;
-        flasks = 0;
-        shootCD = 0.0f;
-        shootRate = SHOOT_RATE_BASE;
-        bulletSpeed = PLAYER_BULLET_SPEED_BASE;
-        isRolling = false;
-        rollTimer = 0.0f;
-        recoveryTimer = 0.0f;
-        rollDir = {0,0,0};
-        isParrying = false;
-        parryTimer = 0.0f;
-        parryWindow = PARRY_WINDOW_BASE;
-        hitInvuln = 0.0f;
-        healTimer = 0.0f;
-        isHealing = false;
-        score.store(0);
-        combo.store(0);
-        souls.store(0);
-        vitality = 0;
-        endurance = 0;
-        strength = 0;
-        dexterity = 0;
-        shake = 0.0f;
+        grace = maxGrace;
+        spirit = maxSpirit;
+        fervor = 0.0f;
+        isShielding = false;
+        isSwinging = false;
+        isCrossing = false;
+        swingTimer = 0.0f;
+        crossTimer = 0.0f;
+        isDashing = false;
+        dashTimer = 0.0f;
+        hitStun = 0.0f;
+        merit.store(0);
+        claritasTimer = 0.0f;
     }
 };
 
-struct Enemy {
-    EnemyType type;
+struct Vice {
+    ViceType type;
     Vector3 pos;
     float rotation;
-    std::atomic<int> health;
-    int maxHealth;
-    float shootTimer;
-    float patternAngle = 0.0f;
-    float speed = 3.2f;
-    float scale = 1.0f;
-    std::atomic<bool> alive {true};
-    Color color;
-    int soulValue = 100;
+    
+    // Redemption Mechanic
+    std::atomic<float> corruption; // Health equivalent
+    float maxCorruption;
+    
+    float attackTimer;
+    float moveSpeed;
+    float scale;
+    std::atomic<bool> redeemed {false};
+    
+    // AI State
+    bool stunned = false;
+    float stunTimer = 0.0f;
 
-    Enemy() = default;
-
-    Enemy(Enemy&& other) noexcept
-        : type(other.type),
-          pos(other.pos),
-          rotation(other.rotation),
-          health(other.health.load()),
-          maxHealth(other.maxHealth),
-          shootTimer(other.shootTimer),
-          patternAngle(other.patternAngle),
-          speed(other.speed),
-          scale(other.scale),
-          alive(other.alive.load()),
-          color(other.color),
-          soulValue(other.soulValue) {}
-
-    Enemy& operator=(Enemy&& other) noexcept {
+    Vice() = default;
+    
+    // Move constructor/assignment for vector resizing
+    Vice(Vice&& other) noexcept : corruption(other.corruption.load()), redeemed(other.redeemed.load()) {
+        type = other.type; pos = other.pos; rotation = other.rotation;
+        maxCorruption = other.maxCorruption; attackTimer = other.attackTimer;
+        moveSpeed = other.moveSpeed; scale = other.scale;
+        stunned = other.stunned; stunTimer = other.stunTimer;
+    }
+    
+    Vice& operator=(Vice&& other) noexcept {
         if (this != &other) {
-            type = other.type;
-            pos = other.pos;
-            rotation = other.rotation;
-            health.store(other.health.load());
-            maxHealth = other.maxHealth;
-            shootTimer = other.shootTimer;
-            patternAngle = other.patternAngle;
-            speed = other.speed;
-            scale = other.scale;
-            alive.store(other.alive.load());
-            color = other.color;
-            soulValue = other.soulValue;
+            type = other.type; pos = other.pos; rotation = other.rotation;
+            corruption.store(other.corruption.load());
+            redeemed.store(other.redeemed.load());
+            maxCorruption = other.maxCorruption; attackTimer = other.attackTimer;
+            moveSpeed = other.moveSpeed; scale = other.scale;
+            stunned = other.stunned; stunTimer = other.stunTimer;
         }
         return *this;
     }
 };
 
-GameState state = TITLE;
-int wave = 1;
-Player player;
-std::vector<Enemy> enemies;
-std::vector<Bullet> playerBullets;
-std::vector<Bullet> enemyBullets;
-std::vector<Particle> particles;
-std::vector<SoulOrb> soulOrbs;
+// ======================================================================
+// Globals
+// ======================================================================
+GameState currentState = STATE_TITLE;
+int vigilCount = 1; // Wave number
+Guardian guardian;
+std::vector<Vice> vices;
+std::vector<Temptation> temptations;
+std::vector<LightMote> motes;
+std::vector<LoveHeart> loveHearts;
 Camera3D camera = {0};
-float hitStop = 0.0f;
-std::atomic<int> totalEnemyBullets {0};
-std::atomic<int> neutralized {0};
-float accuracy = 0.0f;
-
-Vector3 bonfirePos = {0, 0, 0};
-
-std::mutex sharedMutex;
-std::mutex playerHitMutex;
-
-std::vector<std::string> deathQuotes = {
-    "Bullet Issue", "Git Gud @ Dodging", "Parry Failed", "Souls Lost Forever",
-    "Accuracy = 0%", "Try Shooting Them", "Flask Harder", "Roll Punished",
-    "Combo Lost", "Bonfire Denied", "Humanity Drained", "You Died... Again"
-};
-
-// ======================================================================
-// Functions
-// ======================================================================
-void InitGame();
-void ResetWave(bool fullReset = false);
-void UpdateGame(float dt);
-void UpdatePlayer(float dt);
-void UpdateEnemies(float dt);
-void UpdateBullets(float dt);
-void UpdateParticles(float dt);
-void CollectSouls(float dt);
-void UpdateCamera();
-void SpawnBullet(Vector3 pos, Vector3 vel, Color col, bool playerOwned, bool reflected = false);
-void SpawnParticles(Vector3 pos, Color col, int count, float speed, std::vector<Particle>& out_particles);
-void SpawnParticles(Vector3 pos, Color col, int count, float speed);
-void DropSouls(Vector3 pos, int amount, std::vector<SoulOrb>& out_soulOrbs);
-void DropSouls(Vector3 pos, int amount);
-void RestAtBonfire();
-int GetUpgradeCost(int level);
-void Draw3D();
-void DrawPlayer();
-void DrawEnemy(const Enemy& e);
-void DrawCrosshairAndAimMarker();
-void DrawHUD();
-void DrawBonfireMenu();
-void DrawTitle();
-void DrawDeath();
-void DrawVictory();
-Vector3 GetAimPoint();
-
 ThreadPool* g_pool = nullptr;
+std::mutex sharedMutex;
+
+// Visuals
+float timeSinceStart = 0.0f;
+float screenShake = 0.0f;
+float hitStop = 0.0f;
+
+// ======================================================================
+// Forward Declarations
+// ======================================================================
+void InitLumenFidei();
+void StartVigil(bool fullReset);
+void UpdateFrame(float dt);
+void DrawFrame();
+void SpawnTemptation(Vector3 pos, Vector3 vel, Color col, bool isTruth);
+void SpawnMotes(Vector3 pos, Color col, int count, float speed);
+
+// ======================================================================
+// Logic
+// ======================================================================
+
+void InitLumenFidei() {
+    camera.fovy = 55.0f;
+    camera.projection = CAMERA_PERSPECTIVE;
+    camera.up = {0,1,0};
+    camera.position = {0, CAMERA_HEIGHT, CAMERA_DISTANCE};
+    camera.target = {0, 0, 0};
+    
+    StartVigil(true);
+}
+
+void StartVigil(bool fullReset) {
+    if (fullReset) {
+        guardian.reset();
+        vigilCount = 1;
+    } else {
+        guardian.grace = std::min(guardian.grace + 40.0f, guardian.maxGrace);
+    }
+    
+    guardian.pos = {0,0,0};
+    temptations.clear();
+    vices.clear();
+    motes.clear();
+    
+    // Boss Wave at 5
+    if (vigilCount == 5) {
+        Vice v;
+        v.type = CARDINAL_SIN;
+        v.maxCorruption = 2500.0f;
+        v.corruption.store(v.maxCorruption);
+        v.moveSpeed = 0.0f; // Static
+        v.scale = 6.0f;
+        v.attackTimer = 2.0f;
+        v.pos = {0, 0, -40};
+        vices.push_back(std::move(v));
+    } else {
+        int count = 6 + (vigilCount * 2);
+        for (int i = 0; i < count; i++) {
+            Vice v;
+            v.type = (i % 6 == 0) ? RAGER : (i % 4 == 0) ? ACCUSER : WHISPERER;
+            v.maxCorruption = (v.type == RAGER) ? 180 : (v.type == ACCUSER) ? 120 : 50;
+            v.corruption.store(v.maxCorruption);
+            v.moveSpeed = (v.type == WHISPERER) ? 6.0f : 3.5f;
+            v.scale = (v.type == RAGER) ? 2.0f : (v.type == ACCUSER) ? 1.6f : 0.9f;
+            v.attackTimer = GetRandomValue(10, 50) / 10.0f;
+            
+            float ang = GetRandomValue(0, 360) * DEG2RAD;
+            float dist = GetRandomValue(45, 80);
+            v.pos = {cosf(ang) * dist, 0, sinf(ang) * dist};
+            vices.push_back(std::move(v));
+        }
+    }
+}
+
+void UpdateGuardian(float dt) {
+    guardian.hitStun = std::max(0.0f, guardian.hitStun - dt);
+    guardian.wordCooldown = std::max(0.0f, guardian.wordCooldown - dt);
+    guardian.claritasTimer = std::max(0.0f, guardian.claritasTimer - dt);
+    
+    // Claritas (Time-Slow)
+    if (IsKeyPressed(KEY_Q) && guardian.merit >= CLARITAS_COST && guardian.claritasTimer <= 0.0f) {
+        guardian.merit -= CLARITAS_COST;
+        guardian.claritasTimer = CLARITAS_DURATION;
+        SpawnMotes(guardian.pos, COL_SPIRIT, 50, 12.0f);
+    }
+
+    // Regeneration
+    if (!guardian.isShielding && !guardian.isDashing) {
+        guardian.spirit = std::min(guardian.spirit + SPIRIT_REGEN * dt, guardian.maxSpirit);
+    }
+
+    // Input: Aiming
+    Vector2 mousePos = GetMousePosition();
+    Ray ray = GetMouseRay(mousePos, camera);
+    float t = -ray.position.y / ray.direction.y;
+    Vector3 groundPos = Vector3Add(ray.position, Vector3Scale(ray.direction, t));
+    Vector3 lookDir = Vector3Subtract(groundPos, guardian.pos);
+    guardian.facingAngle = atan2f(lookDir.x, lookDir.z);
+
+    // Input: Censer of Mercy (Left Click)
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !guardian.isSwinging && guardian.spirit >= 10.0f) {
+        guardian.isSwinging = true;
+        guardian.swingTimer = guardian.swingDuration;
+        guardian.spirit -= 10.0f;
+        screenShake = 0.15f;
+    }
+    
+    if (guardian.isSwinging) {
+        guardian.swingTimer -= dt;
+        if (guardian.swingTimer <= 0) guardian.isSwinging = false;
+        // Spawn trail particles
+        float progress = 1.0f - (guardian.swingTimer / guardian.swingDuration);
+        float ang = guardian.facingAngle + (progress - 0.5f) * guardian.swingArc;
+        Vector3 censerPos = Vector3Add(guardian.pos, {sinf(ang) * guardian.swingRange, 2.0f, cosf(ang) * guardian.swingRange});
+        SpawnMotes(censerPos, GOLD, 2, 4.0f);
+    }
+
+    // Input: Sign of the Cross (Space)
+    if (IsKeyPressed(KEY_SPACE) && !guardian.isCrossing && guardian.spirit >= 40.0f) {
+        guardian.isCrossing = true;
+        guardian.crossTimer = guardian.crossDuration;
+        guardian.spirit -= 40.0f;
+        SpawnMotes(guardian.pos, WHITE, 40, 10.0f);
+    }
+
+    if (guardian.isCrossing) {
+        guardian.crossTimer -= dt;
+        if (guardian.crossTimer <= 0) guardian.isCrossing = false;
+        // Divine protection during the sign
+    }
+
+    // Canticle of Joy (F)
+    if (IsKeyPressed(KEY_F) && guardian.fervor >= guardian.maxFervor) {
+        guardian.fervor = 0;
+        screenShake = 1.0f;
+        SpawnMotes(guardian.pos, PINK, 100, 30.0f); // Pink for Love
+        for (auto& v : vices) {
+            v.corruption.store(v.corruption - 500.0f);
+            if (v.corruption <= 0 && !v.redeemed) {
+                v.redeemed = true;
+                guardian.merit.fetch_add(100);
+            }
+        }
+    }
+
+    // Input: Shield (Right Click)
+    if (IsMouseButtonDown(MOUSE_RIGHT_BUTTON) && guardian.spirit > 0 && !guardian.isSwinging) {
+        if (!guardian.isShielding) {
+            guardian.shieldTimer = 0.0f;
+        }
+        guardian.isShielding = true;
+        guardian.shieldTimer += dt;
+        guardian.spirit -= SPIRIT_DRAIN_SHIELD * dt;
+    } else {
+        guardian.isShielding = false;
+        guardian.shieldTimer = 0.0f;
+    }
+    
+    // Input: The Word (E)
+    if (IsKeyPressed(KEY_E) && guardian.spirit >= WORD_COST && guardian.wordCooldown <= 0.0f) {
+        guardian.spirit -= WORD_COST;
+        guardian.wordCooldown = WORD_COOLDOWN;
+        
+        // Effect: Pushback and Stun
+        SpawnMotes(guardian.pos, COL_GRACE, 30, 15.0f);
+        screenShake = 0.3f;
+        
+        for (auto& v : vices) {
+            float dist = Vector3Distance(v.pos, guardian.pos);
+            if (dist < WORD_RADIUS) {
+                Vector3 pushDir = Vector3Normalize(Vector3Subtract(v.pos, guardian.pos));
+                v.pos = Vector3Add(v.pos, Vector3Scale(pushDir, 8.0f)); // Knockback
+                v.stunned = true;
+                v.stunTimer = 1.5f;
+            }
+        }
+        
+        // Clear nearby weak temptations
+        for (auto& t : temptations) {
+            if (Vector3Distance(t.pos, guardian.pos) < WORD_RADIUS && !t.isTruth) {
+                t.life = 0; // Dissipate
+                SpawnMotes(t.pos, WHITE, 5, 5.0f);
+            }
+        }
+    }
+    
+    // Input: Movement (WASD)
+    Vector3 input = {0,0,0};
+    if (IsKeyDown(KEY_W)) input.z -= 1;
+    if (IsKeyDown(KEY_S)) input.z += 1;
+    if (IsKeyDown(KEY_A)) input.x -= 1;
+    if (IsKeyDown(KEY_D)) input.x += 1;
+    
+    // Dash (Shift)
+    if (IsKeyPressed(KEY_LEFT_SHIFT) && guardian.spirit >= DASH_COST && !guardian.isDashing && Vector3Length(input) > 0.1f) {
+        guardian.isDashing = true;
+        guardian.dashTimer = DASH_DURATION;
+        guardian.dashDir = Vector3Normalize(input);
+        guardian.spirit -= DASH_COST;
+    }
+    
+    if (guardian.isDashing) {
+        guardian.pos = Vector3Add(guardian.pos, Vector3Scale(guardian.dashDir, DASH_SPEED * dt));
+        guardian.dashTimer -= dt;
+        if (guardian.dashTimer <= 0) guardian.isDashing = false;
+        SpawnMotes(guardian.pos, COL_SPIRIT, 1, 2.0f);
+    } else if (Vector3Length(input) > 0.1f) {
+        guardian.pos = Vector3Add(guardian.pos, Vector3Scale(Vector3Normalize(input), PLAYER_SPEED * dt));
+    }
+    
+    // Clamp
+    guardian.pos.x = Clamp(guardian.pos.x, -80, 80);
+    guardian.pos.z = Clamp(guardian.pos.z, -80, 80);
+}
+
+void UpdateVices(float dt) {
+    if (vices.empty()) return;
+
+    size_t num = vices.size();
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    if (numThreads == 0) numThreads = 4;
+    size_t chunk = (num + numThreads - 1) / numThreads;
+
+    std::vector<std::future<void>> futures;
+    for (size_t t = 0; t < numThreads; ++t) {
+        size_t start = t * chunk;
+        size_t endd = std::min(start + chunk, num);
+        
+        futures.push_back(g_pool->enqueue([start, endd, dt]() {
+            for (size_t i = start; i < endd; ++i) {
+                Vice& v = vices[i];
+                if (v.redeemed) {
+                    v.pos.y += 5.0f * dt; // Ascend
+                    continue;
+                }
+                
+                if (v.stunned) {
+                    v.stunTimer -= dt;
+                    if (v.stunTimer <= 0) v.stunned = false;
+                } else {
+                    // Censer Swing Interaction
+                    if (guardian.isSwinging) {
+                        float dist = Vector3Distance(v.pos, guardian.pos);
+                        if (dist < guardian.swingRange + 2.0f) {
+                            Vector3 toVice = Vector3Subtract(v.pos, guardian.pos);
+                            float angleToVice = atan2f(toVice.x, toVice.z);
+                            float angleDiff = fabs(angleToVice - guardian.facingAngle);
+                            while (angleDiff > PI) angleDiff -= 2*PI;
+                            while (angleDiff < -PI) angleDiff += 2*PI;
+
+                            if (fabs(angleDiff) < guardian.swingArc / 2.0f) {
+                                v.corruption.store(v.corruption - 50.0f * dt * 10.0f); // Fast conversion on hit
+                                SpawnMotes(v.pos, COL_GRACE, 2, 5.0f);
+                                if (v.corruption <= 0) {
+                                    v.redeemed = true;
+                                    guardian.merit.fetch_add(100);
+                                    SpawnMotes(v.pos, GOLD, 50, 10.0f);
+                                }
+                            }
+                        }
+                    }
+
+                    // Chase behavior
+                    Vector3 toPlayer = Vector3Subtract(guardian.pos, v.pos);
+                    toPlayer.y = 0;
+                    float dist = Vector3Length(toPlayer);
+                    Vector3 dir = Vector3Normalize(toPlayer);
+                    
+                    float keepDist = (v.type == WHISPERER) ? 20.0f : 8.0f;
+                    
+                    if (dist > keepDist) {
+                        v.pos = Vector3Add(v.pos, Vector3Scale(dir, v.moveSpeed * dt));
+                    } else if (dist < keepDist - 2.0f) {
+                        v.pos = Vector3Subtract(v.pos, Vector3Scale(dir, v.moveSpeed * 0.5f * dt));
+                    }
+                    
+                    // Attack behavior
+                    v.attackTimer -= dt;
+                    if (v.attackTimer <= 0.0f) {
+                        // Attack logic
+                        if (v.type == WHISPERER) {
+                            SpawnTemptation(v.pos, Vector3Scale(dir, 18.0f), COL_TEMPTATION, false);
+                            v.attackTimer = 1.5f;
+                        } else if (v.type == ACCUSER) {
+                            // Shotgun blast
+                             for(int k=-1; k<=1; k++) {
+                                 Vector3 spread = Vector3RotateByAxisAngle(dir, {0,1,0}, k * 0.2f);
+                                 SpawnTemptation(v.pos, Vector3Scale(spread, 14.0f), COL_TEMPTATION, false);
+                             }
+                             v.attackTimer = 3.0f;
+                        } else if (v.type == RAGER) {
+                            // Charge
+                            v.pos = Vector3Add(v.pos, Vector3Scale(dir, 10.0f)); 
+                            SpawnTemptation(v.pos, Vector3Scale(dir, 25.0f), MAROON, false);
+                            v.attackTimer = 2.0f;
+                        } else if (v.type == CARDINAL_SIN) {
+                            // Phase 1: Cross Pattern
+                            float angOffset = (float)GetTime() * 0.5f;
+                            for (int k = 0; k < 4; k++) {
+                                float ang = angOffset + k * PI/2;
+                                Vector3 crossDir = {cosf(ang), 0, sinf(ang)};
+                                SpawnTemptation(v.pos, Vector3Scale(crossDir, 16.0f), COL_TEMPTATION, false);
+                            }
+                            
+                            // Phase 2: Rapid Doubts (Targeted)
+                            if (fmodf(GetTime(), 4.0f) > 2.0f) {
+                                Vector3 spread = Vector3RotateByAxisAngle(dir, {0,1,0}, (float)GetRandomValue(-20, 20) * 0.01f);
+                                SpawnTemptation(v.pos, Vector3Scale(spread, 22.0f), MAROON, false);
+                            }
+                            
+                            v.attackTimer = 0.5f;
+                        }
+                    }
+                }
+            }
+        }));
+    }
+    for (auto& fut : futures) fut.wait();
+    
+    // Clean up redeemed souls
+    for (auto it = vices.begin(); it != vices.end();) {
+        if (it->redeemed && it->pos.y > 20.0f) {
+            it = vices.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void UpdateTemptations(float dt) {
+    float timeScale = (guardian.claritasTimer > 0) ? CLARITAS_SLOW_FACTOR : 1.0f;
+    float currentDt = dt * timeScale;
+
+    // 1. Move
+    for (auto& t : temptations) {
+        t.pos = Vector3Add(t.pos, Vector3Scale(t.vel, currentDt));
+        t.life -= currentDt;
+        t.trail.push_front(t.pos);
+        if (t.trail.size() > 12) t.trail.pop_back();
+    }
+    
+    // 2. Collision with Guardian (Censer Swing, Shield, or Body)
+    for (auto& t : temptations) {
+        if (t.isTruth) continue; 
+        if (t.life <= 0) continue;
+        
+        float dist = Vector3Distance(t.pos, guardian.pos);
+        
+        // Censer Swing Check
+        if (guardian.isSwinging && dist < guardian.swingRange + 2.0f) {
+            Vector3 toBullet = Vector3Subtract(t.pos, guardian.pos);
+            float angleToBullet = atan2f(toBullet.x, toBullet.z);
+            float angleDiff = fabs(angleToBullet - guardian.facingAngle);
+            while (angleDiff > PI) angleDiff -= 2*PI;
+            while (angleDiff < -PI) angleDiff += 2*PI;
+
+            if (fabs(angleDiff) < guardian.swingArc / 2.0f) {
+                // PURIFY with Censer
+                t.vel = Vector3Scale(Vector3Normalize(Vector3Negate(t.vel)), Vector3Length(t.vel) * 2.0f);
+                t.isTruth = true;
+                t.color = COL_TRUTH;
+                t.life = 6.0f;
+                SpawnMotes(t.pos, COL_GRACE, 12, 12.0f);
+                guardian.merit.fetch_add(5); 
+                guardian.fervor = std::min(guardian.fervor + 10.0f, guardian.maxFervor); // Build fervor
+                continue;
+            }
+        }
+
+        // Sign of the Cross Check
+        if (guardian.isCrossing && dist < 12.0f) {
+            // Check if bullet is within the vertical or horizontal beams of the cross
+            Vector3 local = Vector3Subtract(t.pos, guardian.pos);
+            if (fabs(local.x) < 2.0f || fabs(local.z) < 2.0f) {
+                t.isTruth = true;
+                t.color = COL_TRUTH;
+                t.vel = Vector3Scale(Vector3Normalize(Vector3Negate(t.vel)), Vector3Length(t.vel) * 1.5f);
+                t.life = 7.0f;
+                SpawnMotes(t.pos, WHITE, 5, 8.0f);
+                continue;
+            }
+        }
+
+        if (dist < 3.0f) {
+            // Check Shield
+            Vector3 toBullet = Vector3Subtract(t.pos, guardian.pos);
+            float angleToBullet = atan2f(toBullet.x, toBullet.z);
+            float angleDiff = fabs(angleToBullet - guardian.facingAngle);
+            while (angleDiff > PI) angleDiff -= 2*PI;
+            while (angleDiff < -PI) angleDiff += 2*PI;
+            
+            bool blocked = guardian.isShielding && (fabs(angleDiff) < SHIELD_ARC / 2.0f);
+            
+            if (blocked) {
+                // REFLECT / BLOCK
+                bool perfect = guardian.shieldTimer < PARRY_WINDOW;
+                
+                t.vel = Vector3Scale(Vector3Normalize(Vector3Negate(t.vel)), Vector3Length(t.vel) * 1.5f);
+                t.isTruth = true; // Convert to Truth
+                t.color = COL_TRUTH;
+                t.life = 5.0f;
+                
+                SpawnMotes(t.pos, COL_GRACE, 10, 10.0f);
+                
+                if (perfect) {
+                    guardian.spirit = std::min(guardian.spirit + 15.0f, guardian.maxSpirit); // Restore spirit
+                    screenShake = 0.2f;
+                    // Play chime sound here
+                } else {
+                    guardian.spirit -= 10.0f; // Chip stamina on block
+                    if (guardian.spirit < 0) guardian.isShielding = false; // Guard break
+                }
+            } else if (guardian.hitStun <= 0.0f && !guardian.isDashing) {
+                // HIT
+                guardian.grace -= 15.0f;
+                guardian.hitStun = 1.0f;
+                screenShake = 0.5f;
+                hitStop = 0.1f;
+                t.life = 0;
+                SpawnMotes(guardian.pos, RED, 20, 15.0f);
+            }
+        }
+    }
+    
+    // 3. Collision with Vices (Redemption)
+    for (auto& t : temptations) {
+        if (!t.isTruth) continue;
+        if (t.life <= 0) continue;
+        
+        for (auto& v : vices) {
+            if (v.redeemed) continue;
+            if (Vector3Distance(t.pos, v.pos) < v.scale * 2.0f) {
+                v.corruption.store(v.corruption - 35.0f); // Damage
+                t.life = 0; // Destroy projectile
+                SpawnMotes(t.pos, COL_SPIRIT, 15, 8.0f);
+                
+                if (v.corruption <= 0) {
+                    v.redeemed = true;
+                    guardian.merit.fetch_add(100);
+                    SpawnMotes(v.pos, GOLD, 50, 10.0f);
+                    
+                    // Divine Love: 35% chance to drop a Heart
+                    if (GetRandomValue(0, 100) < 35) {
+                        LoveHeart h;
+                        h.pos = v.pos; h.pos.y = 2.0f;
+                        h.life = 10.0f;
+                        h.floatOffset = (float)GetRandomValue(0, 100);
+                        std::lock_guard<std::mutex> lock(sharedMutex);
+                        loveHearts.push_back(h);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Cleanup
+    temptations.erase(std::remove_if(temptations.begin(), temptations.end(), 
+        [](const Temptation& t){ return t.life <= 0; }), temptations.end());
+}
+
+void SpawnTemptation(Vector3 pos, Vector3 vel, Color col, bool isTruth) {
+    Temptation t;
+    t.pos = pos;
+    t.pos.y = 2.0f;
+    t.vel = vel;
+    t.color = col;
+    t.life = 5.0f;
+    t.isTruth = isTruth;
+    
+    std::lock_guard<std::mutex> lock(sharedMutex);
+    temptations.push_back(t);
+}
+
+void SpawnMotes(Vector3 pos, Color col, int count, float speed) {
+    std::lock_guard<std::mutex> lock(sharedMutex);
+    for(int i=0; i<count; i++) {
+        LightMote m;
+        m.pos = pos;
+        Vector3 dir = { (float)GetRandomValue(-10,10), (float)GetRandomValue(-10,10), (float)GetRandomValue(-10,10) };
+        m.vel = Vector3Scale(Vector3Normalize(dir), speed);
+        m.color = col;
+        m.life = 1.0f;
+        m.maxLife = 1.0f;
+        m.size = (float)GetRandomValue(2,5) / 10.0f;
+        motes.push_back(m);
+    }
+}
+
+void UpdateFrame(float dt) {
+    timeSinceStart += dt;
+    screenShake = std::max(0.0f, screenShake - dt);
+    
+    // Camera follow
+    Vector3 targetPos = guardian.pos;
+    // Add mouse peek
+    Vector3 mouseOffset = Vector3Subtract(GetScreenToWorldRay(GetMousePosition(), camera).position, guardian.pos);
+    // Rough approx since raycasting to ground plane is needed for perfect peek, just use simple lerp for now
+    
+    camera.target = Vector3Lerp(camera.target, targetPos, 5.0f * dt);
+    if (screenShake > 0) {
+        camera.position.x += GetRandomValue(-10,10) * screenShake * 0.1f;
+        camera.position.z += GetRandomValue(-10,10) * screenShake * 0.1f;
+    } else {
+        camera.position = Vector3Add(camera.target, {0, CAMERA_HEIGHT, CAMERA_DISTANCE});
+    }
+
+    UpdateGuardian(dt);
+    UpdateVices(dt);
+    UpdateTemptations(dt);
+    
+    // Update Divine Love
+    for (auto it = loveHearts.begin(); it != loveHearts.end();) {
+        it->life -= dt;
+        it->pos.y = 2.0f + 0.5f * sinf(GetTime() * 3.0f + it->floatOffset);
+        
+        float dist = Vector3Distance(it->pos, guardian.pos);
+        if (dist < 4.0f) {
+            guardian.grace = std::min(guardian.grace + 25.0f, guardian.maxGrace);
+            SpawnMotes(it->pos, PINK, 20, 10.0f); // Pink for Love
+            it = loveHearts.erase(it);
+        } else if (it->life <= 0) {
+            it = loveHearts.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    
+    // Update Motes
+    for(auto& m : motes) {
+        m.pos = Vector3Add(m.pos, Vector3Scale(m.vel, dt));
+        m.life -= dt;
+    }
+    motes.erase(std::remove_if(motes.begin(), motes.end(), [](const LightMote& m){ return m.life <= 0; }), motes.end());
+
+    // Check Win/Loss
+    if (guardian.grace <= 0) currentState = STATE_DESOLATION;
+    if (vices.empty()) {
+        currentState = STATE_ALTAR;
+    }
+}
+
+void DrawFrame() {
+    BeginDrawing();
+    ClearBackground({12, 12, 22, 255}); 
+    
+    BeginMode3D(camera);
+        // Stained Glass Radiant Floor
+        DrawPlane({0,-0.1f,0}, {250, 250}, {18, 18, 28, 255});
+        for (int i = 0; i < 12; i++) {
+            float ang = (float)i / 12 * 2 * PI;
+            Vector3 start = {cosf(ang) * 5.0f, 0, sinf(ang) * 5.0f};
+            Vector3 end = {cosf(ang) * 120.0f, 0, sinf(ang) * 120.0f};
+            Color col = (i % 3 == 0) ? Fade(COL_GRACE, 0.15f) : (i % 3 == 1) ? Fade(COL_SPIRIT, 0.1f) : Fade(PURPLE, 0.08f);
+            DrawLine3D(start, end, col);
+            for (int r = 1; r < 5; r++) {
+                DrawCircle3D({0, 0, 0}, r * 25.0f, {0, 1, 0}, 90.0f, col);
+            }
+        }
+        
+        // Guardian Radiance
+        DrawCylinder(guardian.pos, 1.0f, 1.0f, 3.2f, 8, COL_GRACE);
+        DrawSphere(Vector3Add(guardian.pos, {0,3.5f,0}), 1.1f, COL_GRACE);
+        DrawSphere(Vector3Add(guardian.pos, {0,3.5f,0}), 1.8f, Fade(COL_GRACE, 0.15f)); // Halo
+        
+        if (guardian.isCrossing) {
+            float progress = 1.0f - (guardian.crossTimer / guardian.crossDuration);
+            Color crossCol = Fade(WHITE, (1.0f - progress) * 0.8f);
+            // Vertical bar
+            DrawCube(Vector3Add(guardian.pos, {0, 4.0f, 0}), 0.8f, 12.0f, 0.8f, crossCol);
+            // Horizontal bar
+            DrawCube(Vector3Add(guardian.pos, {0, 6.0f, 0}), 8.0f, 0.8f, 0.8f, crossCol);
+            DrawSphere(guardian.pos, 10.0f, Fade(WHITE, 0.05f));
+        }
+
+        if (guardian.isSwinging) {
+            float progress = 1.0f - (guardian.swingTimer / guardian.swingDuration);
+            for (int i = 0; i < 20; i++) {
+                float step = (float)i / 20.0f;
+                float ang = guardian.facingAngle + (progress - 0.5f - step * 0.3f) * guardian.swingArc;
+                Vector3 arcPos = Vector3Add(guardian.pos, {sinf(ang) * guardian.swingRange, 2.0f, cosf(ang) * guardian.swingRange});
+                DrawSphere(arcPos, 0.5f * (1.0f - step), Fade(GOLD, 0.6f * (1.0f - step)));
+                DrawLine3D(guardian.pos, arcPos, Fade(COL_GRACE, 0.15f * (1.0f - step)));
+            }
+        }
+        
+        if (guardian.isShielding) {
+            rlPushMatrix();
+            rlTranslatef(guardian.pos.x, 2.0f, guardian.pos.z);
+            rlRotatef(-guardian.facingAngle * RAD2DEG - 90, 0, 1, 0);
+            
+            Color shieldCol = (guardian.shieldTimer < PARRY_WINDOW) ? WHITE : COL_SPIRIT;
+            // Shield "Shell"
+            DrawCylinderEx({0,0,0}, {0,0,0}, 4.5f, 4.5f, 16, Fade(shieldCol, 0.12f)); 
+            
+            Vector3 left = {cosf(-SHIELD_ARC/2), 0, sinf(-SHIELD_ARC/2)};
+            Vector3 right = {cosf(SHIELD_ARC/2), 0, sinf(SHIELD_ARC/2)};
+            DrawLine3D({0,0,0}, Vector3Scale(left, 5.0f), shieldCol);
+            DrawLine3D({0,0,0}, Vector3Scale(right, 5.0f), shieldCol);
+            DrawSphere({0,0,3.2f}, 0.7f, shieldCol);
+            DrawSphere({0,0,3.2f}, 1.4f, Fade(shieldCol, 0.2f)); 
+            
+            rlPopMatrix();
+        }
+        
+        // Divine Love Drops
+        for (const auto& h : loveHearts) {
+            float pulse = 0.3f * sinf(GetTime() * 5.0f);
+            DrawSphere(h.pos, 0.8f + pulse, PINK);
+            DrawSphere(h.pos, 1.2f + pulse, Fade(GOLD, 0.3f));
+            // Heart-like wings/petals
+            for (int i=0; i<2; i++) {
+                float side = (i == 0) ? 1.0f : -1.0f;
+                Vector3 p = {side * 1.5f, 0.8f, 0};
+                DrawSphere(Vector3Add(h.pos, p), 0.6f, Fade(PINK, 0.6f));
+            }
+        }
+
+        // Vices
+        for (const auto& v : vices) {
+            Color vCol = (v.stunned) ? GRAY : (v.type == CARDINAL_SIN) ? COL_BOSS : COL_VICE;
+            if (v.redeemed) vCol = GOLD;
+            
+            if (v.type == CARDINAL_SIN) {
+                // Boss Visual
+                DrawSphere(v.pos, v.scale * 1.5f, vCol);
+                DrawSphere(v.pos, v.scale * 2.2f, Fade(vCol, 0.15f)); 
+                // Crown
+                for (int i=0; i<8; i++) {
+                    float ang = i * PI/4 + GetTime();
+                    Vector3 spike = {cosf(ang) * v.scale, v.scale * 2.0f, sinf(ang) * v.scale};
+                    DrawLine3D(v.pos, Vector3Add(v.pos, spike), GOLD);
+                }
+            } else {
+                DrawSphere(v.pos, v.scale * 1.5f, vCol);
+            }
+            
+            // Redemption Bar
+            if (!v.redeemed) {
+                Vector3 barPos = Vector3Add(v.pos, {0, v.scale * 2.8f, 0});
+                float hpPct = v.corruption / v.maxCorruption;
+                float width = v.scale * 3.0f;
+                // Background
+                DrawCube(barPos, width, 0.4f, 0.4f, Fade(BLACK, 0.5f));
+                // Foreground (offset so it fills from left to right)
+                Vector3 fgPos = barPos;
+                fgPos.x -= (width / 2.0f) * (1.0f - hpPct);
+                DrawCube(fgPos, width * hpPct, 0.5f, 0.5f, (v.type == CARDINAL_SIN) ? PURPLE : GOLD);
+            }
+        }
+        
+        // Temptations
+        for (const auto& t : temptations) {
+            DrawSphere(t.pos, 0.6f, t.color);
+            if (t.isTruth) DrawSphereWires(t.pos, 0.8f, 6, 6, GOLD);
+            
+            // Draw Trail
+            if (t.trail.size() > 1) {
+                for (size_t i = 0; i < t.trail.size() - 1; i++) {
+                    float alpha = 0.6f * (1.0f - ((float)i / t.trail.size()));
+                    DrawLine3D(t.trail[i], t.trail[i+1], Fade(t.color, alpha));
+                }
+            }
+        }
+        
+        // Motes
+        for (const auto& m : motes) {
+            DrawCube(m.pos, m.size, m.size, m.size, Fade(m.color, m.life));
+        }
+        
+        // Cursor
+        Vector3 aimPos = {0};
+        Ray ray = GetMouseRay(GetMousePosition(), camera);
+        float t = -ray.position.y / ray.direction.y;
+        aimPos = Vector3Add(ray.position, Vector3Scale(ray.direction, t));
+        DrawCircle3D(aimPos, 1.2f, {1, 0, 0}, 90.0f, Fade(WHITE, 0.5f));
+        DrawCircle3D(aimPos, 0.6f, {1, 0, 0}, 90.0f, Fade(WHITE, 0.3f));
+
+    EndMode3D();
+    
+    // UI
+    DrawText("LUMEN FIDEI", 20, 20, 40, COL_GRACE);
+    DrawText(TextFormat("VIGIL %d", vigilCount), 20, 60, 30, WHITE);
+    
+    // The Father (Grace)
+    DrawRectangle(20, SCREEN_HEIGHT - 60, 300, 30, Fade(BLACK, 0.5f));
+    DrawRectangle(20, SCREEN_HEIGHT - 60, 300 * (guardian.grace / guardian.maxGrace), 30, COL_GRACE);
+    DrawText("LOVE", 30, SCREEN_HEIGHT - 55, 20, BLACK);
+    
+    // The Son (Mercy)
+    DrawRectangle(20, SCREEN_HEIGHT - 90, 250, 20, Fade(BLACK, 0.5f));
+    DrawRectangle(20, SCREEN_HEIGHT - 90, 250 * (guardian.spirit / guardian.maxSpirit), 20, COL_SPIRIT);
+    DrawText("MERCY", 30, SCREEN_HEIGHT - 90, 18, BLACK);
+
+    // The Holy Spirit (Praise)
+    float fervorPct = guardian.fervor / guardian.maxFervor;
+    DrawRectangle(20, SCREEN_HEIGHT - 120, 200, 15, Fade(BLACK, 0.5f));
+    DrawRectangle(20, SCREEN_HEIGHT - 120, 200 * fervorPct, 15, PINK);
+    DrawText("PRAISE", 30, SCREEN_HEIGHT - 120, 14, BLACK);
+    if (fervorPct >= 1.0f) DrawText("PRESS F - CANTICLE OF JOY", 20, SCREEN_HEIGHT - 150, 20, GOLD);
+
+    // Merit
+    DrawText(TextFormat("JOY: %d", guardian.merit.load()), SCREEN_WIDTH - 250, 20, 30, GOLD);
+    
+    // Instructions
+    DrawText("WASD Move • L-Click Swing • R-Click Shield • SPACE Cross • F Canticle", 20, 100, 20, Fade(WHITE, 0.5f));
+    
+    if (currentState == STATE_DESOLATION) {
+        DrawRectangle(0,0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.8f));
+        DrawText("DESOLATION", SCREEN_WIDTH/2 - MeasureText("DESOLATION", 60)/2, SCREEN_HEIGHT/2 - 50, 60, RED);
+        DrawText("The light has faded...", SCREEN_WIDTH/2 - MeasureText("The light has faded...", 30)/2, SCREEN_HEIGHT/2 + 20, 30, GRAY);
+        DrawText("Press R to Rekindle", SCREEN_WIDTH/2 - MeasureText("Press R to Rekindle", 20)/2, SCREEN_HEIGHT/2 + 60, 20, WHITE);
+    } else if (currentState == STATE_ALTAR) {
+        DrawRectangle(0,0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.85f));
+        DrawText("ALTAR OF REFLECTION", SCREEN_WIDTH/2 - MeasureText("ALTAR OF REFLECTION", 60)/2, 100, 60, GOLD);
+        DrawText(TextFormat("Merit: %d", guardian.merit.load()), SCREEN_WIDTH/2 - MeasureText("Merit: 9999", 40)/2, 180, 40, WHITE);
+        
+        DrawText("1. Prudence (Parry Window +0.02s) - 200 Merit", 300, 300, 30, (guardian.merit >= 200) ? GREEN : GRAY);
+        DrawText("2. Temperance (Max Grace +20) - 200 Merit", 300, 350, 30, (guardian.merit >= 200) ? GREEN : GRAY);
+        DrawText("3. Justice (Reflect Damage +15%) - 300 Merit", 300, 400, 30, (guardian.merit >= 300) ? GREEN : GRAY);
+        
+        DrawText("SPACE to Begin Next Vigil", SCREEN_WIDTH/2 - MeasureText("SPACE to Begin Next Vigil", 40)/2, SCREEN_HEIGHT - 100, 40, WHITE);
+    }
+    
+    EndDrawing();
+}
 
 // ======================================================================
 // Main
 // ======================================================================
 int main() {
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Parry the Storm – Ashes of the Bullet (Dark Souls Edition)");
-
-    SetExitKey(KEY_NULL);
-
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Lumen Fidei – The Shield of Saints");
     SetTargetFPS(60);
-    HideCursor();
-    InitAudioDevice();
-    InitGame();
-
+    // HideCursor(); // Use custom cursor
+    
+    InitLumenFidei();
+    
     unsigned int numThreads = std::thread::hardware_concurrency();
     if (numThreads == 0) numThreads = 4;
     g_pool = new ThreadPool(numThreads);
 
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
-        if (hitStop > 0.0f) {
+        if (hitStop > 0) {
             hitStop -= dt;
-            dt = 0.0f;
+            dt = 0;
         }
 
-        if (state == TITLE) {
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || IsKeyPressed(KEY_ENTER)) {
-                wave = 1;
-                state = PLAYING;
-                ResetWave();
-            }
-        } else if (state == PLAYING || state == PAUSED || state == BONFIRE) {
-            if (IsKeyPressed(KEY_ESCAPE)) {
-                state = (state == PLAYING || state == BONFIRE) ? PAUSED : PLAYING;
-            }
-            if (state == PLAYING) {
-                UpdateGame(dt);
-            } else if (state == BONFIRE) {
-                if (IsKeyPressed(KEY_ONE) && player.souls.load() >= GetUpgradeCost(player.vitality)) {
-                    player.souls.fetch_sub(GetUpgradeCost(player.vitality++));
-                    player.maxHealth += 12;
-                    player.health = player.maxHealth;
-                }
-                if (IsKeyPressed(KEY_TWO) && player.souls.load() >= GetUpgradeCost(player.endurance)) {
-                    player.souls.fetch_sub(GetUpgradeCost(player.endurance++));
-                    player.maxStamina += 15;
-                    player.stamina = player.maxStamina;
-                }
-                if (IsKeyPressed(KEY_THREE) && player.souls.load() >= GetUpgradeCost(player.strength)) {
-                    player.souls.fetch_sub(GetUpgradeCost(player.strength++));
-                    player.bulletSpeed += 5.0f;
-                }
-                if (IsKeyPressed(KEY_FOUR) && player.souls.load() >= GetUpgradeCost(player.dexterity)) {
-                    player.souls.fetch_sub(GetUpgradeCost(player.dexterity++));
-                    player.shootRate *= 0.92f;
-                    player.parryWindow += 0.02f;
-                }
-                if (IsKeyPressed(KEY_SPACE)) {
-                    ResetWave();
-                    state = PLAYING;
-                }
-            }
-        } else if (state == DEAD) {
+        if (currentState == STATE_DESOLATION) {
             if (IsKeyPressed(KEY_R)) {
-                wave = 1;
-                ResetWave(true);
-                state = PLAYING;
+                StartVigil(true);
+                currentState = STATE_VIGIL;
             }
+        } else if (currentState == STATE_ALTAR) {
+            if (IsKeyPressed(KEY_ONE) && guardian.merit >= 200) {
+                guardian.merit -= 200;
+                // Prudence logic would go here (parry window constant needs to become variable)
+            }
+            if (IsKeyPressed(KEY_TWO) && guardian.merit >= 200) {
+                guardian.merit -= 200;
+                guardian.maxGrace += 20;
+                guardian.grace += 20;
+            }
+            if (IsKeyPressed(KEY_THREE) && guardian.merit >= 300) {
+                guardian.merit -= 300;
+                // Justice logic
+            }
+            if (IsKeyPressed(KEY_SPACE)) {
+                vigilCount++;
+                StartVigil(false);
+                currentState = STATE_VIGIL;
+            }
+            UpdateFrame(0); // Update camera only? Or just pause. 0 dt pauses physics.
+        } else {
+            UpdateFrame(dt);
         }
-
-        BeginDrawing();
-        ClearBackground({8, 8, 18, 255});
-
-        BeginMode3D(camera);
-        Draw3D();
-        EndMode3D();
-
-        DrawCrosshairAndAimMarker();
-        DrawHUD();
-        if (state == TITLE) DrawTitle();
-        if (state == DEAD) DrawDeath();
-        if (state == VICTORY) DrawVictory();
-        if (state == BONFIRE) DrawBonfireMenu();
-        if (state == PAUSED) {
-            DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.7f));
-            DrawText("PAUSED - GIT GUD", SCREEN_WIDTH/2 - MeasureText("PAUSED - GIT GUD", 80)/2, SCREEN_HEIGHT/2 - 40, 80, GOLD);
-        }
-
-        EndDrawing();
+        
+        DrawFrame();
     }
-
+    
     delete g_pool;
-
     CloseWindow();
     return 0;
-}
-
-void InitGame() {
-    camera.fovy = 60.0f;
-    camera.projection = CAMERA_PERSPECTIVE;
-    camera.up = {0,1,0};
-    ResetWave(true);
-}
-
-void ResetWave(bool fullReset) {
-    if (fullReset) {
-        player.reset();
-    } else {
-        player.health = player.maxHealth;
-        player.stamina = player.maxStamina;
-    }
-    player.flasks = 0;
-    player.pos = {0, 0, 25.0f};
-
-    enemies.clear();
-    playerBullets.clear();
-    enemyBullets.clear();
-    particles.clear();
-    soulOrbs.clear();
-    totalEnemyBullets.store(0);
-    neutralized.store(0);
-    player.score.store(0);
-    player.combo.store(0);
-
-    auto spawnEnemy = [&](EnemyType t, int count, int hp, int souls) {
-        for (int i = 0; i < count; i++) {
-            enemies.emplace_back();
-            Enemy& e = enemies.back();
-            e.type = t;
-            e.health.store(hp);
-            e.maxHealth = hp;
-            e.soulValue = souls;
-            e.shootTimer = (float)i * 0.25f;
-            float angle = (float)i / (float)count * 2 * PI + (float)GetRandomValue(-30,30) * DEG2RAD;
-            float radius = 55.0f;
-            e.pos = {cosf(angle) * radius, 0, sinf(angle) * radius};
-            e.color = (t == BOSS) ? MAROON : (t == SHIELDED) ? DARKGRAY : (t == RAPID) ? ORANGE : (t == SPIRAL) ? PURPLE : RED;
-            e.scale = (t == BOSS) ? 3.5f : (t == SHIELDED) ? 1.4f : 1.0f;
-            e.alive.store(true);
-        }
-    };
-
-    if (wave == 1) {
-        spawnEnemy(GRUNT, 10, 70, 80);
-    } else if (wave == 2) {
-        spawnEnemy(GRUNT, 4, 90, 120);
-        spawnEnemy(SPIRAL, 3, 60, 140);
-        spawnEnemy(RAPID, 4, 55, 110);
-    } else if (wave == 3) {
-        spawnEnemy(WALL, 4, 100, 180);
-        spawnEnemy(SHIELDED, 4, 140, 250);
-        spawnEnemy(BOSS, 1, 3200, 5000);
-    }
-}
-
-void RestAtBonfire() {
-    player.flasks = MAX_FLASKS;
-    player.health = player.maxHealth;
-    player.stamina = player.maxStamina;
-    player.pos = bonfirePos;
-}
-
-int GetUpgradeCost(int level) {
-    return UPGRADE_COST_BASE + level * UPGRADE_COST_MULTIPLIER;
-}
-
-void DropSouls(Vector3 pos, int amount, std::vector<SoulOrb>& out_soulOrbs) {
-    thread_local std::mt19937 rng(std::random_device{}());
-    std::uniform_int_distribution<int> dist(-60, 60);
-    int orbs = amount / 80;
-    for (int i = 0; i < orbs; i++) {
-        SoulOrb s;
-        s.pos = Vector3Add(pos, {dist(rng)/10.0f, 3.0f, dist(rng)/10.0f});
-        s.timer = 10.0f;
-        out_soulOrbs.push_back(s);
-    }
-    player.souls.fetch_add(amount % 80);
-}
-
-void DropSouls(Vector3 pos, int amount) {
-    std::vector<SoulOrb> local;
-    DropSouls(pos, amount, local);
-    if (!local.empty()) {
-        std::lock_guard<std::mutex> lock(sharedMutex);
-        soulOrbs.insert(soulOrbs.end(), local.begin(), local.end());
-    }
-}
-
-void CollectSouls(float dt) {
-    for (auto it = soulOrbs.begin(); it != soulOrbs.end(); ) {
-        Vector3 toPlayer = Vector3Subtract(player.pos, it->pos);
-        float dist = Vector3Length(toPlayer);
-        if (dist < 6.0f || it->timer <= 0.0f) {
-            player.souls.fetch_add(80);
-            it = soulOrbs.erase(it);
-        } else {
-            it->pos = Vector3Add(it->pos, Vector3Scale(Vector3Normalize(toPlayer), 20.0f * dt));
-            it->timer -= dt;
-            ++it;
-        }
-    }
-}
-
-Vector3 GetAimPoint() {
-    Ray ray = GetMouseRay(GetMousePosition(), camera);
-    if (ray.direction.y != 0.0f) {
-        float t = -ray.position.y / ray.direction.y;
-        if (t > 0) return Vector3Add(ray.position, Vector3Scale(ray.direction, t));
-    }
-    return player.pos;
-}
-
-void UpdatePlayer(float dt) {
-    player.hitInvuln = std::max(0.0f, player.hitInvuln - dt);
-    player.shake = std::max(0.0f, player.shake - dt);
-    player.shootCD = std::max(0.0f, player.shootCD - dt);
-
-    if (player.isHealing) {
-        player.healTimer -= dt;
-        if (player.healTimer <= 0.0f) player.isHealing = false;
-    }
-
-    player.stamina = std::min(player.stamina + STAMINA_REGEN_BASE * dt, (float)player.maxStamina);
-
-    Vector3 aimPoint = GetAimPoint();
-    Vector3 toAim = Vector3Subtract(aimPoint, player.pos);
-    toAim.y = 0;
-    if (Vector3Length(toAim) > 0.1f) {
-        player.rotation = atan2f(toAim.x, toAim.z);
-    }
-
-    Vector3 input {0,0,0};
-    if (IsKeyDown(KEY_W)) input.z += 1;
-    if (IsKeyDown(KEY_S)) input.z -= 1;
-    if (IsKeyDown(KEY_D)) input.x += 1;
-    if (IsKeyDown(KEY_A)) input.x -= 1;
-    bool moving = Vector3Length(input) > 0.1f;
-
-    Vector3 camDir = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-    camDir.y = 0;
-    camDir = Vector3Normalize(camDir);
-    Vector3 camRight = Vector3CrossProduct(camDir, {0,1,0});
-
-    Vector3 moveDir = Vector3Add(Vector3Scale(camDir, input.z), Vector3Scale(camRight, input.x));
-    if (moving) moveDir = Vector3Normalize(moveDir);
-
-    float speed = PLAYER_BASE_SPEED;
-    if (IsKeyDown(KEY_LEFT_SHIFT) && moving && player.stamina > 10.0f) speed *= SPRINT_MULTIPLIER;
-
-    if (player.recoveryTimer > 0.0f) {
-        player.recoveryTimer -= dt;
-        speed *= 0.4f;
-    }
-
-    static float shiftTimer = 0.0f;
-    if (IsKeyDown(KEY_LEFT_SHIFT)) {
-        shiftTimer += dt;
-    } else {
-        if (shiftTimer > 0.0f && shiftTimer < 0.22f && moving && player.stamina >= ROLL_COST && !player.isRolling && player.recoveryTimer <= 0.0f) {
-            player.isRolling = true;
-            player.rollTimer = ROLL_DURATION;
-            player.rollDir = moveDir;
-            player.stamina -= ROLL_COST;
-            player.hitInvuln = ROLL_DURATION + 0.15f;
-        }
-        shiftTimer = 0.0f;
-    }
-
-    if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && player.shootCD <= 0.0f) {
-        Vector3 shootDir = Vector3Normalize(toAim);
-        Vector3 muzzle = Vector3Add(player.pos, Vector3Scale(shootDir, 2.0f));
-        muzzle.y = 1.5f;
-        SpawnBullet(muzzle, Vector3Scale(shootDir, player.bulletSpeed), SKYBLUE, true);
-        player.shootCD = player.shootRate;
-        SpawnParticles(muzzle, YELLOW, 6, 8.0f);
-    }
-
-    if (IsKeyPressed(KEY_SPACE) && player.stamina >= PARRY_COST && !player.isParrying) {
-        player.isParrying = true;
-        player.parryTimer = player.parryWindow;
-        player.stamina -= PARRY_COST;
-    }
-    if (player.isParrying) {
-        player.parryTimer -= dt;
-        if (player.parryTimer <= 0.0f) player.isParrying = false;
-    }
-
-    if (IsKeyPressed(KEY_E) && player.flasks > 0 && !player.isHealing) {
-        player.isHealing = true;
-        player.healTimer = FLASK_TIME;
-        player.flasks--;
-    }
-    if (player.isHealing && player.healTimer <= 0.5f) {
-        player.health = std::min(player.health + (int)FLASK_HEAL_BASE, player.maxHealth);
-    }
-
-    if (player.isRolling) {
-        player.rollTimer -= dt;
-        player.pos = Vector3Add(player.pos, Vector3Scale(player.rollDir, ROLL_SPEED * dt));
-        if (player.rollTimer <= 0.0f) {
-            player.isRolling = false;
-            player.recoveryTimer = ROLL_RECOVERY;
-        }
-    } else {
-        player.pos = Vector3Add(player.pos, Vector3Scale(moveDir, speed * dt));
-    }
-
-    float limit = 80.0f;
-    player.pos.x = Clamp(player.pos.x, -limit, limit);
-    player.pos.z = Clamp(player.pos.z, -limit, limit);
-}
-
-void UpdateEnemies(float dt) {
-    size_t num = enemies.size();
-    if (num == 0) return;
-
-    unsigned int numThreads = std::thread::hardware_concurrency();
-    if (numThreads == 0) numThreads = 4;
-    size_t chunk = (num + numThreads - 1) / numThreads;
-
-    std::vector<std::future<void>> futures;
-    for (size_t t = 0; t < numThreads; ++t) {
-        size_t start = t * chunk;
-        size_t endd = std::min(start + chunk, num);
-        futures.push_back(g_pool->enqueue([start, endd, dt]() {
-            std::vector<Bullet> localBullets;
-            int localCount = 0;
-            for (size_t k = start; k < endd; ++k) {
-                Enemy& e = enemies[k];
-                if (!e.alive.load()) continue;
-
-                Vector3 toPlayer = Vector3Subtract(player.pos, e.pos);
-                toPlayer.y = 0;
-                float dist = Vector3Length(toPlayer);
-                if (dist > 1.0f) {
-                    e.rotation = atan2f(toPlayer.x, toPlayer.z);
-                }
-
-                if (e.type != BOSS) {
-                    Vector3 dir = Vector3Normalize(toPlayer);
-                    e.pos = Vector3Add(e.pos, Vector3Scale(dir, e.speed * dt));
-                }
-
-                e.shootTimer -= dt;
-                if (e.shootTimer <= 0.0f && dist < 70.0f) {
-                    Vector3 dir = Vector3Normalize(toPlayer);
-                    if (Vector3Length(dir) < 0.1f) dir = {0,0,1};
-
-                    switch (e.type) {
-                        case GRUNT: {
-                            Bullet b;
-                            b.pos = Vector3Add(e.pos, {0,2,0});
-                            b.pos.y = 2.0f;
-                            b.vel = Vector3Scale(dir, ENEMY_BULLET_SPEED);
-                            b.color = RED;
-                            b.life = BULLET_LIFETIME;
-                            b.playerBullet = false;
-                            b.reflected = false;
-                            localBullets.push_back(b);
-                            localCount++;
-                            e.shootTimer = 1.8f;
-                            break;
-                        }
-                        case SPIRAL: {
-                            for (int i = 0; i < 8; i++) {
-                                float ang = e.patternAngle + i * PI/4;
-                                Vector3 spd = {sinf(ang), 0, cosf(ang)};
-                                Bullet b;
-                                b.pos = Vector3Add(e.pos, {0,2,0});
-                                b.pos.y = 2.0f;
-                                b.vel = Vector3Scale(spd, ENEMY_BULLET_SPEED);
-                                b.color = PURPLE;
-                                b.life = BULLET_LIFETIME;
-                                b.playerBullet = false;
-                                b.reflected = false;
-                                localBullets.push_back(b);
-                                localCount++;
-                            }
-                            e.patternAngle += 0.4f;
-                            e.shootTimer = 0.9f;
-                            break;
-                        }
-                        case RAPID: {
-                            Bullet b;
-                            b.pos = Vector3Add(e.pos, {0,2,0});
-                            b.pos.y = 2.0f;
-                            b.vel = Vector3Scale(dir, ENEMY_BULLET_SPEED * 1.3f);
-                            b.color = ORANGE;
-                            b.life = BULLET_LIFETIME;
-                            b.playerBullet = false;
-                            b.reflected = false;
-                            localBullets.push_back(b);
-                            localCount++;
-                            e.shootTimer = 0.25f;
-                            break;
-                        }
-                        case WALL: {
-                            for (int i = -4; i <= 4; i++) {
-                                Vector3 side = Vector3CrossProduct(dir, {0,1,0});
-                                Vector3 offset = Vector3Scale(side, i * 3.0f);
-                                Bullet b;
-                                b.pos = Vector3Add(Vector3Add(e.pos, offset), {0,0,0});
-                                b.pos.y = 2.0f;
-                                b.vel = Vector3Scale(dir, ENEMY_BULLET_SPEED);
-                                b.color = MAROON;
-                                b.life = BULLET_LIFETIME;
-                                b.playerBullet = false;
-                                b.reflected = false;
-                                localBullets.push_back(b);
-                                localCount++;
-                            }
-                            e.shootTimer = 2.2f;
-                            break;
-                        }
-                        case SHIELDED: {
-                            Bullet b;
-                            b.pos = Vector3Add(e.pos, {0,2,0});
-                            b.pos.y = 2.0f;
-                            b.vel = Vector3Scale(dir, ENEMY_BULLET_SPEED * 0.9f);
-                            b.color = DARKGRAY;
-                            b.life = BULLET_LIFETIME;
-                            b.playerBullet = false;
-                            b.reflected = false;
-                            localBullets.push_back(b);
-                            localCount++;
-                            e.shootTimer = 2.0f;
-                            break;
-                        }
-                        case BOSS: {
-                            int phase = (e.health.load() > 1600) ? 1 : (e.health.load() > 800) ? 2 : 3;
-                            if (phase == 1) {
-                                for (int i = 0; i < 12; i++) {
-                                    float ang = e.patternAngle + i * PI/6;
-                                    Vector3 spd = {sinf(ang), 0, cosf(ang)};
-                                    Bullet b;
-                                    b.pos = Vector3Add(e.pos, {0,4,0});
-                                    b.pos.y = 2.0f;
-                                    b.vel = Vector3Scale(spd, ENEMY_BULLET_SPEED);
-                                    b.color = RED;
-                                    b.life = BULLET_LIFETIME;
-                                    b.playerBullet = false;
-                                    b.reflected = false;
-                                    localBullets.push_back(b);
-                                    localCount++;
-                                }
-                                e.patternAngle += 0.3f;
-                                e.shootTimer = 0.6f;
-                            } else if (phase == 2) {
-                                for (int i = 0; i < 5; i++) {
-                                    Bullet b;
-                                    b.pos = Vector3Add(e.pos, {0,4,0});
-                                    b.pos.y = 2.0f;
-                                    b.vel = Vector3Scale(dir, ENEMY_BULLET_SPEED * (1 + i*0.2f));
-                                    b.color = MAROON;
-                                    b.life = BULLET_LIFETIME;
-                                    b.playerBullet = false;
-                                    b.reflected = false;
-                                    localBullets.push_back(b);
-                                    localCount++;
-                                }
-                                e.shootTimer = 1.4f;
-                            } else {
-                                for (int i = 0; i < 20; i++) {
-                                    float ang = (float)i / 20 * 2 * PI;
-                                    Vector3 spd = {sinf(ang), 0, cosf(ang)};
-                                    Bullet b;
-                                    b.pos = Vector3Add(e.pos, {0,4,0});
-                                    b.pos.y = 2.0f;
-                                    b.vel = Vector3Scale(spd, ENEMY_BULLET_SPEED * 1.2f);
-                                    b.color = VIOLET;
-                                    b.life = BULLET_LIFETIME;
-                                    b.playerBullet = false;
-                                    b.reflected = false;
-                                    localBullets.push_back(b);
-                                    localCount++;
-                                }
-                                e.shootTimer = 0.8f;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-            if (!localBullets.empty()) {
-                std::lock_guard<std::mutex> lock(sharedMutex);
-                enemyBullets.insert(enemyBullets.end(), localBullets.begin(), localBullets.end());
-                totalEnemyBullets.fetch_add(localCount);
-            }
-        }));
-    }
-    for (auto& fut : futures) fut.wait();
-}
-
-void SpawnBullet(Vector3 pos, Vector3 vel, Color col, bool playerOwned, bool reflected) {
-    Bullet b;
-    b.pos = pos;
-    b.pos.y = 2.0f;
-    b.vel = vel;
-    b.color = col;
-    b.life = BULLET_LIFETIME;
-    b.playerBullet = playerOwned;
-    b.reflected = reflected;
-    std::lock_guard<std::mutex> lock(sharedMutex);
-    if (playerOwned) {
-        playerBullets.push_back(b);
-    } else {
-        enemyBullets.push_back(b);
-        totalEnemyBullets.fetch_add(1);
-    }
-}
-
-void SpawnParticles(Vector3 pos, Color col, int count, float speed, std::vector<Particle>& out_particles) {
-    thread_local std::mt19937 rng(std::random_device{}());
-    std::uniform_int_distribution<int> dist100(-100, 100);
-    std::uniform_int_distribution<int> dist30(30, 100);
-    std::uniform_int_distribution<int> dist3080(30, 80);
-    std::uniform_int_distribution<int> dist4(4, 12);
-    for (int i = 0; i < count; i++) {
-        Particle p;
-        p.pos = pos;
-        Vector3 dir = {dist100(rng)/100.0f, dist30(rng)/100.0f, dist100(rng)/100.0f};
-        p.vel = Vector3Scale(Vector3Normalize(dir), speed);
-        p.life = p.maxLife = dist3080(rng)/100.0f;
-        p.color = col;
-        p.size = dist4(rng)/10.0f;
-        out_particles.push_back(p);
-    }
-}
-
-void SpawnParticles(Vector3 pos, Color col, int count, float speed) {
-    std::vector<Particle> local;
-    SpawnParticles(pos, col, count, speed, local);
-    if (!local.empty()) {
-        std::lock_guard<std::mutex> lock(sharedMutex);
-        particles.insert(particles.end(), local.begin(), local.end());
-    }
-}
-
-void UpdateParticles(float dt) {
-    size_t num = particles.size();
-    if (num == 0) return;
-
-    unsigned int numThreads = std::thread::hardware_concurrency();
-    if (numThreads == 0) numThreads = 4;
-    size_t chunk = (num + numThreads - 1) / numThreads;
-
-    std::vector<std::future<void>> futures;
-    for (size_t t = 0; t < numThreads; ++t) {
-        size_t start = t * chunk;
-        size_t endd = std::min(start + chunk, num);
-        futures.push_back(g_pool->enqueue([start, endd, dt]() {
-            for (size_t k = start; k < endd; ++k) {
-                Particle& p = particles[k];
-                p.pos = Vector3Add(p.pos, Vector3Scale(p.vel, dt));
-                p.vel.y -= 20.0f * dt;
-                p.life -= dt;
-            }
-        }));
-    }
-    for (auto& fut : futures) fut.wait();
-
-    // Sequential removal
-    for (auto it = particles.begin(); it != particles.end(); ) {
-        if (it->life <= 0.0f) it = particles.erase(it);
-        else ++it;
-    }
-}
-
-void UpdateCamera() {
-    Vector3 desiredPos = Vector3Add(player.pos, {0, CAMERA_HEIGHT, CAMERA_DISTANCE});
-    camera.position = Vector3Lerp(camera.position, desiredPos, CAMERA_SMOOTH * GetFrameTime());
-    camera.target = Vector3Add(player.pos, {0, 3.0f, 0});
-
-    if (player.shake > 0.0f) {
-        Vector3 shakeOffset = {GetRandomValue(-100,100)/100.0f * player.shake * 10,
-                               GetRandomValue(-100,100)/100.0f * player.shake * 10,
-                               GetRandomValue(-100,100)/100.0f * player.shake * 10};
-        camera.position = Vector3Add(camera.position, shakeOffset);
-    }
-}
-
-void UpdateBullets(float dt) {
-    // Update positions and life
-    auto update_pos = [dt](std::vector<Bullet>& buls) {
-        size_t num = buls.size();
-        if (num == 0) return;
-        unsigned int numThreads = std::thread::hardware_concurrency();
-        if (numThreads == 0) numThreads = 4;
-        size_t chunk = (num + numThreads - 1) / numThreads;
-        std::vector<std::future<void>> futures;
-        for (size_t t = 0; t < numThreads; ++t) {
-            size_t start = t * chunk;
-            size_t endd = std::min(start + chunk, num);
-            futures.push_back(g_pool->enqueue([start, endd, dt, &buls]() {
-                for (size_t k = start; k < endd; ++k) {
-                    Bullet& b = buls[k];
-                    b.pos = Vector3Add(b.pos, Vector3Scale(b.vel, dt));
-                    b.life -= dt;
-                }
-            }));
-        }
-        for (auto& fut : futures) fut.wait();
-    };
-    update_pos(playerBullets);
-    update_pos(enemyBullets);
-
-    // Remove expired bullets
-    std::set<size_t> toRemovePlayer, toRemoveEnemy;
-    for (size_t i = 0; i < playerBullets.size(); ++i) {
-        const Bullet& b = playerBullets[i];
-        if (b.life <= 0.0f || Vector3Length(b.pos) > 120.0f) {
-            toRemovePlayer.insert(i);
-        }
-    }
-    for (size_t i = 0; i < enemyBullets.size(); ++i) {
-        const Bullet& b = enemyBullets[i];
-        if (b.life <= 0.0f || Vector3Length(b.pos) > 120.0f) {
-            toRemoveEnemy.insert(i);
-        }
-    }
-
-    // Player hit by enemy bullets (sequential for simplicity, as n is large but checks fast)
-    for (size_t i = 0; i < enemyBullets.size(); ++i) {
-        const Bullet& b = enemyBullets[i];
-        if (Vector3Distance(b.pos, player.pos) < 3.0f && player.hitInvuln <= 0.0f) {
-            player.health -= 12;
-            player.hitInvuln = 0.6f;
-            player.combo.store(0);
-            player.shake = 0.4f;
-            hitStop = 0.06f;
-            SpawnParticles(b.pos, RED, 25, 14.0f);
-            toRemoveEnemy.insert(i);
-        }
-    }
-
-    // Parry enemy bullets
-    struct ThreadData {
-        std::set<size_t> local_toRemoveEnemy;
-        std::vector<Bullet> local_reflected;
-        std::vector<Particle> local_particles;
-        int local_num_parries = 0;
-    };
-    unsigned int numThreads = std::thread::hardware_concurrency();
-    if (numThreads == 0) numThreads = 4;
-    std::vector<ThreadData> threadDatas(numThreads);
-    size_t eb_num = enemyBullets.size();
-    size_t eb_chunk = (eb_num + numThreads - 1) / numThreads;
-    std::vector<std::future<void>> futures;
-    for (size_t t = 0; t < numThreads; ++t) {
-        size_t start = t * eb_chunk;
-        size_t endd = std::min(start + eb_chunk, eb_num);
-        futures.push_back(g_pool->enqueue([start, endd, &threadDatas, t]() {
-            ThreadData& data = threadDatas[t];
-            for (size_t i = start; i < endd; ++i) {
-                const Bullet& b = enemyBullets[i];
-                if (player.isParrying && Vector3Distance(b.pos, player.pos) < PARRY_RANGE) {
-                    Bullet newb = b;
-                    newb.vel = Vector3Scale(Vector3Normalize(Vector3Negate(newb.vel)), Vector3Length(newb.vel) * PERFECT_PARRY_BONUS);
-                    newb.playerBullet = true;
-                    newb.reflected = true;
-                    newb.color = GOLD;
-                    data.local_reflected.push_back(newb);
-                    data.local_num_parries++;
-                    SpawnParticles(newb.pos, YELLOW, 35, 18.0f, data.local_particles);
-                    data.local_toRemoveEnemy.insert(i);
-                }
-            }
-        }));
-    }
-    for (auto& fut : futures) fut.wait();
-
-    int total_num_parries = 0;
-    for (auto& data : threadDatas) {
-        total_num_parries += data.local_num_parries;
-        toRemoveEnemy.insert(data.local_toRemoveEnemy.begin(), data.local_toRemoveEnemy.end());
-        playerBullets.insert(playerBullets.end(), data.local_reflected.begin(), data.local_reflected.end());
-        if (!data.local_particles.empty()) {
-            std::lock_guard<std::mutex> lock(sharedMutex);
-            particles.insert(particles.end(), data.local_particles.begin(), data.local_particles.end());
-        }
-    }
-    if (total_num_parries > 0) {
-        hitStop = 0.09f;
-        player.shake = 0.5f;
-    }
-    for (int k = 0; k < total_num_parries; ++k) {
-        neutralized.fetch_add(1);
-        int old_c = player.combo.fetch_add(1);
-        player.score.fetch_add(30 * (old_c + 1));
-    }
-
-    // Bullet on bullet collisions
-    struct ThreadDataColl {
-        std::set<size_t> local_toRemovePlayer;
-        std::set<size_t> local_toRemoveEnemy;
-        std::vector<Particle> local_particles;
-        int local_num_coll = 0;
-    };
-    std::vector<ThreadDataColl> collDatas(numThreads);
-    size_t pb_num = playerBullets.size();
-    size_t pb_chunk = (pb_num + numThreads - 1) / numThreads;
-    futures.clear();
-    for (size_t t = 0; t < numThreads; ++t) {
-        size_t start = t * pb_chunk;
-        size_t endd = std::min(start + pb_chunk, pb_num);
-        futures.push_back(g_pool->enqueue([start, endd, &collDatas, t]() {
-            ThreadDataColl& data = collDatas[t];
-            for (size_t i = start; i < endd; ++i) {
-                const Vector3& ppos = playerBullets[i].pos;
-                for (size_t j = 0; j < enemyBullets.size(); ++j) {
-                    if (Vector3Distance(ppos, enemyBullets[j].pos) < BULLET_SIZE * 2) {
-                        data.local_num_coll++;
-                        SpawnParticles(ppos, WHITE, 15, 12.0f, data.local_particles);
-                        data.local_toRemovePlayer.insert(i);
-                        data.local_toRemoveEnemy.insert(j);
-                    }
-                }
-            }
-        }));
-    }
-    for (auto& fut : futures) fut.wait();
-
-    int total_num_coll = 0;
-    for (auto& data : collDatas) {
-        total_num_coll += data.local_num_coll;
-        toRemovePlayer.insert(data.local_toRemovePlayer.begin(), data.local_toRemovePlayer.end());
-        toRemoveEnemy.insert(data.local_toRemoveEnemy.begin(), data.local_toRemoveEnemy.end());
-        if (!data.local_particles.empty()) {
-            std::lock_guard<std::mutex> lock(sharedMutex);
-            particles.insert(particles.end(), data.local_particles.begin(), data.local_particles.end());
-        }
-    }
-    for (int k = 0; k < total_num_coll; ++k) {
-        neutralized.fetch_add(1);
-        int old_c = player.combo.fetch_add(1);
-        player.score.fetch_add(15 * (old_c + 1));
-    }
-
-    // Player bullets on enemies
-    struct ThreadDataEnemy {
-        std::set<size_t> local_toRemovePlayer;
-        std::vector<Particle> local_particles;
-        std::vector<SoulOrb> local_soulOrbs;
-    };
-    std::vector<ThreadDataEnemy> enemyDatas(numThreads);
-    futures.clear();
-    for (size_t t = 0; t < numThreads; ++t) {
-        size_t start = t * pb_chunk;
-        size_t endd = std::min(start + pb_chunk, pb_num);
-        futures.push_back(g_pool->enqueue([start, endd, &enemyDatas, t]() {
-            ThreadDataEnemy& data = enemyDatas[t];
-            for (size_t i = start; i < endd; ++i) {
-                const Vector3& ppos = playerBullets[i].pos;
-                const bool reflected = playerBullets[i].reflected;
-                for (size_t k = 0; k < enemies.size(); ++k) {
-                    Enemy& e = enemies[k];
-                    if (!e.alive.load()) continue;
-                    Vector3 fromBulletToEnemy = Vector3Subtract(e.pos, ppos);
-                    float dot = Vector3DotProduct(Vector3Normalize(fromBulletToEnemy), 
-                                                  Vector3Normalize({sinf(e.rotation * DEG2RAD), 0, cosf(e.rotation * DEG2RAD)}));
-                    bool blocked = (e.type == SHIELDED && dot > 0.35f);
-                    if (Vector3Distance(ppos, e.pos) < e.scale * 4.0f) {
-                        if (blocked) {
-                            SpawnParticles(ppos, GRAY, 20, 10.0f, data.local_particles);
-                        } else {
-                            int dmg = reflected ? 35 : 18;
-                            int new_h = e.health.fetch_sub(dmg);
-                            if (new_h <= dmg && e.alive.exchange(false)) {
-                                player.score.fetch_add(1000);
-                                player.combo.fetch_add(10);
-                                SpawnParticles(e.pos, RED, 60, 16.0f, data.local_particles);
-                                DropSouls(e.pos, e.soulValue, data.local_soulOrbs);
-                            }
-                            SpawnParticles(ppos, reflected ? GOLD : SKYBLUE, 15, 10.0f, data.local_particles);
-                            player.score.fetch_add(reflected ? 80 : 30);
-                        }
-                        data.local_toRemovePlayer.insert(i);
-                    }
-                }
-            }
-        }));
-    }
-    for (auto& fut : futures) fut.wait();
-
-    for (auto& data : enemyDatas) {
-        toRemovePlayer.insert(data.local_toRemovePlayer.begin(), data.local_toRemovePlayer.end());
-        if (!data.local_particles.empty()) {
-            std::lock_guard<std::mutex> lock(sharedMutex);
-            particles.insert(particles.end(), data.local_particles.begin(), data.local_particles.end());
-        }
-        if (!data.local_soulOrbs.empty()) {
-            std::lock_guard<std::mutex> lock(sharedMutex);
-            soulOrbs.insert(soulOrbs.end(), data.local_soulOrbs.begin(), data.local_soulOrbs.end());
-        }
-    }
-
-    // Remove marked bullets
-    for (auto rit = toRemovePlayer.rbegin(); rit != toRemovePlayer.rend(); ++rit) {
-        playerBullets.erase(playerBullets.begin() + *rit);
-    }
-    for (auto rit = toRemoveEnemy.rbegin(); rit != toRemoveEnemy.rend(); ++rit) {
-        enemyBullets.erase(enemyBullets.begin() + *rit);
-    }
-}
-
-void UpdateGame(float dt) {
-    if (dt == 0.0f) return;
-
-    UpdateCamera();
-    UpdatePlayer(dt);
-    UpdateEnemies(dt);
-    UpdateBullets(dt);
-    CollectSouls(dt);
-    UpdateParticles(dt);
-
-    bool allDead = true;
-    for (const auto& e : enemies) if (e.alive.load()) allDead = false;
-    if (allDead) {
-        if (wave < 3) {
-            wave++;
-            state = BONFIRE;
-            RestAtBonfire();
-        } else {
-            state = VICTORY;
-        }
-    }
-
-    if (player.health <= 0) {
-        state = DEAD;
-    }
-}
-
-void Draw3D() {
-    DrawPlane({0,0,0}, {200,200}, {20,25,40,255});
-
-    Vector3 aimPoint = GetAimPoint();
-    DrawCircle3D(aimPoint, 3.0f, {1,0,0}, 90.0f, Fade(LIME, 0.5f));
-    DrawCircle3D(aimPoint, 1.5f, {1,0,0}, 90.0f, Fade(LIME, 0.8f));
-
-    for (const auto& b : playerBullets) {
-        DrawSphere(b.pos, BULLET_SIZE, b.color);
-        if (b.reflected) DrawSphere(b.pos, BULLET_SIZE * 1.6f, Fade(GOLD, 0.4f));
-    }
-    for (const auto& b : enemyBullets) {
-        DrawSphere(b.pos, BULLET_SIZE, b.color);
-        if (b.reflected) DrawSphere(b.pos, BULLET_SIZE * 1.6f, Fade(GOLD, 0.4f));
-    }
-
-    for (const auto& p : particles) {
-        DrawSphere(p.pos, p.size * (p.life / p.maxLife), Fade(p.color, p.life / p.maxLife));
-    }
-
-    for (const auto& s : soulOrbs) {
-        DrawSphere(s.pos, 1.0f, Fade(GOLD, 0.7f + 0.3f * sinf(GetTime() * 8)));
-    }
-
-    // Bonfire
-    DrawCylinder(bonfirePos, 2.2f, 1.8f, 9.0f, 16, DARKBROWN);
-    for (int i = 0; i < 25; i++) {
-        float ang = i / 25.0f * PI * 2;
-        float h = 3.0f + sinf(GetTime() * 10 + i) * 2.0f;
-        Vector3 flame = {cosf(ang) * 2.2f, h, sinf(ang) * 2.2f};
-        DrawSphere(Vector3Add(bonfirePos, flame), 1.0f, Fade(ORANGE, 0.8f));
-    }
-
-    DrawPlayer();
-    for (const auto& e : enemies) if (e.alive.load()) DrawEnemy(e);
-}
-
-void DrawPlayer() {
-    rlPushMatrix();
-    rlTranslatef(player.pos.x, player.pos.y, player.pos.z);
-    rlRotatef(player.rotation * RAD2DEG, 0,1,0);
-
-    Color body = player.isParrying ? GOLD : SKYBLUE;
-    if (player.hitInvuln > 0.0f) body = Fade(body, 0.6f + 0.4f * sinf(GetTime() * 30));
-
-    DrawCylinderEx({0,0,0}, {0,3,0}, 1.2f, 0.8f, 16, body);
-    DrawSphere({0,3.5f,0}, 0.9f, body);
-    DrawCylinderEx({-0.8f,1.5f,0}, {-1.6f,0.5f,0}, 0.4f, 0.3f, 12, DARKGRAY);
-    DrawCylinderEx({0.8f,2.0f,0.6f}, {1.4f,0.8f,1.2f}, 0.35f, 0.25f, 12, GRAY);
-
-    if (player.isParrying) {
-        DrawSphere({0,1.5f,0}, 5.0f, Fade(GOLD, 0.4f + 0.4f * sinf(GetTime() * 20)));
-    }
-
-    rlPopMatrix();
-}
-
-void DrawEnemy(const Enemy& e) {
-    rlPushMatrix();
-    rlTranslatef(e.pos.x, e.pos.y, e.pos.z);
-    rlRotatef(e.rotation * RAD2DEG, 0,1,0);
-    rlScalef(e.scale, e.scale, e.scale);
-    DrawSphere({0,2,0}, 1.8f, e.color);
-    DrawCylinderEx({0,2,0}, {0,5,0}, 0.8f, 0.4f, 12, Fade(e.color, 0.7f));
-
-    // Shield visual for SHIELDED
-    if (e.type == SHIELDED) {
-        rlPushMatrix();
-        rlTranslatef(-1.2f, 2.0f, 0);
-        rlRotatef(90.0f, 0,1,0);
-        DrawCube({0,0,0}, 2.5f, 4.0f, 0.5f, DARKGRAY);
-        rlPopMatrix();
-    }
-
-    rlPopMatrix();
-}
-
-void DrawCrosshairAndAimMarker() {
-    Vector2 mousePos = GetMousePosition();
-
-    DrawLineEx({mousePos.x - 12, mousePos.y}, {mousePos.x + 12, mousePos.y}, 2.0f, WHITE);
-    DrawLineEx({mousePos.x, mousePos.y - 12}, {mousePos.x, mousePos.y + 12}, 2.0f, WHITE);
-    DrawCircleLines((int)mousePos.x, (int)mousePos.y, 18.0f, WHITE);
-    DrawCircleLines((int)mousePos.x, (int)mousePos.y, 10.0f, WHITE);
-}
-
-void DrawHUD() {
-    int y = 30;
-
-    // Health
-    DrawRectangle(30, y, 400, 40, Fade(BLACK, 0.7f));
-    DrawRectangle(35, y+5, 390 * (float)player.health / player.maxHealth, 30, RED);
-    DrawText("HEALTH", 40, y+8, 28, WHITE);
-    y += 60;
-
-    // Stamina
-    DrawRectangle(30, y, 400, 30, Fade(BLACK, 0.7f));
-    DrawRectangle(35, y+5, 390 * player.stamina / player.maxStamina, 20, LIME);
-    y += 50;
-
-    // Score & Combo
-    DrawText(TextFormat("SCORE: %d", player.score.load()), 30, y, 40, GOLD);
-    int comb = player.combo.load();
-    if (comb > 1) DrawText(TextFormat("COMBO x%d", comb), 30, y+50, 50, ORANGE);
-    y += 100;
-
-    // Accuracy
-    int teb = totalEnemyBullets.load();
-    if (teb > 0) {
-        accuracy = 100.0f * neutralized.load() / teb;
-        Color accCol = accuracy > 80 ? LIME : accuracy > 50 ? YELLOW : RED;
-        DrawText(TextFormat("ACCURACY: %.1f%%", accuracy), 30, y, 40, accCol);
-    }
-    y += 60;
-
-    // Souls & Stats
-    DrawText(TextFormat("Souls: %d", player.souls.load()), SCREEN_WIDTH - 320, 30, 50, YELLOW);
-    DrawText(TextFormat("VIT %d | END %d | STR %d | DEX %d", 
-                        player.vitality, player.endurance, player.strength, player.dexterity),
-             SCREEN_WIDTH - 520, 90, 40, DARKGRAY);
-
-    // Wave & Flasks
-    DrawText(TextFormat("WAVE %d", wave), SCREEN_WIDTH - 300, 150, 50, GOLD);
-    DrawText(TextFormat("FLASKS: %d", player.flasks), SCREEN_WIDTH - 300, 210, 40, ORANGE);
-
-    // Boss health
-    for (const auto& e : enemies) {
-        if (e.alive.load() && e.type == BOSS) {
-            float ratio = (float)e.health.load() / e.maxHealth;
-            DrawRectangle(SCREEN_WIDTH/2 - 400, 40, 800, 50, Fade(BLACK, 0.8f));
-            DrawRectangle(SCREEN_WIDTH/2 - 390, 50, 780 * ratio, 30, RED);
-            DrawText("BULLET LORD", SCREEN_WIDTH/2 - MeasureText("BULLET LORD", 60)/2, 20, 60, GOLD);
-        }
-    }
-}
-
-void DrawBonfireMenu() {
-    DrawRectangle(0,0,SCREEN_WIDTH,SCREEN_HEIGHT,Fade(BLACK,0.85f));
-    DrawText("SITE OF GRACE - LEVEL UP", SCREEN_WIDTH/2 - MeasureText("SITE OF GRACE - LEVEL UP", 70)/2, 120, 70, GOLD);
-    DrawText(TextFormat("Souls: %d", player.souls.load()), SCREEN_WIDTH/2 - 120, 220, 60, YELLOW);
-
-    int y = 320;
-    const char* stats[] = {"Vitality (+12 HP)", "Endurance (+15 Stamina)", "Strength (+5 Bullet Speed)", "Dexterity (Faster Fire/Parry)"};
-    int levels[] = {player.vitality, player.endurance, player.strength, player.dexterity};
-    for (int i = 0; i < 4; i++) {
-        int cost = GetUpgradeCost(levels[i]);
-        Color col = player.souls.load() >= cost ? LIME : RED;
-        DrawText(TextFormat("%d - %s (Lv %d) - Cost %d", i+1, stats[i], levels[i], cost), 300, y, 45, col);
-        y += 70;
-    }
-
-    DrawText("SPACE to Continue Into the Storm", SCREEN_WIDTH/2 - MeasureText("SPACE to Continue Into the Storm", 40)/2, SCREEN_HEIGHT - 140, 40, LIGHTGRAY);
-}
-
-void DrawTitle() {
-    DrawRectangle(0,0,SCREEN_WIDTH,SCREEN_HEIGHT,Fade(BLACK,0.85f));
-    DrawText("PARRY THE STORM", SCREEN_WIDTH/2 - MeasureText("PARRY THE STORM", 100)/2, 150, 100, GOLD);
-    DrawText("Ashes of the Bullet - Dark Souls Edition", SCREEN_WIDTH/2 - MeasureText("Ashes of the Bullet - Dark Souls Edition", 50)/2, 270, 50, YELLOW);
-    DrawText("WASD Move • Mouse Aim/Shoot • SPACE Parry • SHIFT Roll • E Flask", 200, 420, 36, LIGHTGRAY);
-    DrawText("Die and lose everything. Git Gud eternally.", 200, 480, 36, ORANGE);
-    DrawText("Click or ENTER to begin the trial", SCREEN_WIDTH/2 - MeasureText("Click or ENTER to begin the trial", 40)/2, SCREEN_HEIGHT - 120, 40, WHITE);
-}
-
-void DrawDeath() {
-    DrawRectangle(0,0,SCREEN_WIDTH,SCREEN_HEIGHT,Fade(BLACK,0.9f));
-    DrawText("YOU DIED", SCREEN_WIDTH/2 - MeasureText("YOU DIED", 140)/2, SCREEN_HEIGHT/2 - 100, 140, RED);
-    const char* quote = deathQuotes[GetRandomValue(0, deathQuotes.size()-1)].c_str();
-    DrawText(quote, SCREEN_WIDTH/2 - MeasureText(quote, 60)/2, SCREEN_HEIGHT/2 + 40, 60, ORANGE);
-    DrawText("All souls and upgrades lost...", SCREEN_WIDTH/2 - MeasureText("All souls and upgrades lost...", 50)/2, SCREEN_HEIGHT/2 + 120, 50, DARKGRAY);
-    int teb = totalEnemyBullets.load();
-    if (teb > 0) {
-        DrawText(TextFormat("Final Accuracy: %.1f%%", accuracy), SCREEN_WIDTH/2 - MeasureText("Final Accuracy: 100.0%", 50)/2, SCREEN_HEIGHT/2 + 180, 50, accuracy > 80 ? LIME : RED);
-    }
-    DrawText("R to Try Again From the Beginning", SCREEN_WIDTH/2 - MeasureText("R to Try Again From the Beginning", 40)/2, SCREEN_HEIGHT/2 + 260, 40, WHITE);
-}
-
-void DrawVictory() {
-    DrawRectangle(0,0,SCREEN_WIDTH,SCREEN_HEIGHT,Fade(BLACK,0.8f));
-    DrawText("VICTORY – THE STORM IS PARRIED", SCREEN_WIDTH/2 - MeasureText("VICTORY – THE STORM IS PARRIED", 80)/2, 150, 80, GOLD);
-    DrawText(TextFormat("FINAL SCORE: %d", player.score.load()), SCREEN_WIDTH/2 - MeasureText("FINAL SCORE: 999999", 60)/2, 280, 60, YELLOW);
-    DrawText(TextFormat("FINAL ACCURACY: %.1f%%", accuracy), SCREEN_WIDTH/2 - MeasureText("FINAL ACCURACY: 100.0%", 60)/2, 360, 60, accuracy >= 99.0f ? LIME : WHITE);
-    if (accuracy >= 99.0f) DrawText("TRUE GIT GUD ACHIEVED", SCREEN_WIDTH/2 - MeasureText("TRUE GIT GUD ACHIEVED", 60)/2, 460, 60, GOLD);
-    DrawText("You have conquered the ultimate trial.", SCREEN_WIDTH/2 - MeasureText("You have conquered the ultimate trial.", 40)/2, SCREEN_HEIGHT - 120, 40, LIGHTGRAY);
 }

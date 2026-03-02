@@ -1,39 +1,29 @@
-# Game Requirements Specification (GRS): Lumen Fidei – The Shield of Saints
+# Game Requirements Specification (GRS): Lumen Fidei – The Joy of the Trinity
 
 ## 1. Technical Requirements
-*   **Engine/Framework:** C++ with Raylib (optimized for 3D).
+*   **Engine/Framework:** C++ with Raylib (3D).
 *   **Target Platform:** macOS (Intel/Apple Silicon).
-*   **Performance:** Maintain 60 FPS. Rendering must support high-quality transparency for "ethereal" effects.
-*   **Audio Engine:** Support for dynamic music layering (fading between "Dissonance" and "Harmony" tracks based on gameplay state).
+*   **Performance:** 60 FPS minimum. Optimized rendering for "Heart of Love" and "Canticle of Joy" particles.
 
 ## 2. Functional Requirements
-*   **F01: Non-Violent Interaction Logic:**
-    *   Remove all "Damage" calculations. Replace with "Conversion" logic.
-    *   Projectiles must have two states: "Temptation" (Damages Player) and "Truth" (Converts Enemy).
-    *   Enemy death state must be replaced with a "Redemption" animation (fading to white/ascending).
-*   **F02: The Shield Mechanic:**
-    *   Implement a directional shield that rotates around the player.
-    *   Parry logic: Precision timing reflects projectiles at the source. Holding the button creates a "Guard" that absorbs impacts but drains Stamina (Spirit).
-*   **F03: The Word (Aura Mechanic):**
-    *   Implement a short-range, cone-shaped "attack" that applies a "Stun/Pacify" status effect, not damage.
-*   **F04: AI Behavior Changes:**
-    *   AI should not "die" but "retreat" or "change phase" when converted.
-    *   Bosses: Implement non-lethal defeat states (e.g., The Boss kneels in repentance).
+*   **F07: The Sign of the Cross (Sanctuary):**
+    *   Implement a 3D cross that sanctifies doubts and protects the Guardian.
+*   **F08: The Father's Love (Collection System):**
+    *   Implement **Hearts of Love** (replaces Manna). They are bright pink/gold and drift slowly. 
+    *   Collection restores Grace and increases the "Joy Meter."
+*   **F09: The Canticle of Joy (Holy Spirit):**
+    *   Implement **Praise Fervor** (replaces Fervor). Built by Censer hits and collecting Hearts.
+    *   Release the ultimate **Canticle of Joy** when full, clearing all doubts with Light and white doves.
 
 ## 3. Content Requirements
-*   **Levels:**
-    *   *The Garden of Gethsemane:* Tutorial area.
-    *   *The Desert of Temptation:* Open area with swarming Vices.
-    *   *The Crystal Cathedral:* Boss arena.
 *   **Visual Assets:**
-    *   Replace "Bullet" meshes with glowing orbs, thorns, or snakes.
-    *   Replace "Player" mesh with a stylized Guardian/Saint figure.
-    *   Replace "Bonfire" with a Candle-lit Altar or Tabernacle.
+    *   Replace "Manna" with pulsing **Hearts of Divine Love**.
+    *   Replace "Pentecost Fire" with a radiant burst of gold and pink light called **Canticle of Joy**.
+    *   Vices should have a "Sorrowful Shadow" look that turns into "Dancing Light" upon redemption.
 *   **UI/UX:**
-    *   Health Bar -> "Grace Meter" (Gold/White).
-    *   Stamina Bar -> "Spirit Meter" (Blue).
-    *   Boss Bar -> "Redemption Meter" (starts full Red, empties to White).
+    *   Display "Grace" with a beating heart.
+    *   Label "Fervor" as **Praise**.
 
 ## 4. Non-Functional Requirements
-*   **Accessibility:** "Contemplative Mode" (Easy difficulty) that slows down projectiles for a more meditative experience.
-*   **Tone Compliance:** Ensure all text, names, and visuals strictly adhere to the reverent, non-violent theme. No aggression, gore, or occult imagery.
+*   **Tone Compliance:** Every element must radiate joy and love. Avoid sharp or dark terminology where possible.
+*   **Accessibility:** A mode for "Endless Praise" with reduced challenge for purely meditative play.

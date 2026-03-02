@@ -1,40 +1,24 @@
-# Game Design Document: Lumen Fidei – The Shield of Saints
+# Game Design Document: Lumen Fidei – The Joy of the Trinity
 
 ## 1. Executive Summary
-**Lumen Fidei** (Light of Faith) is a non-violent, spiritual arcade game inspired by Catholic teachings and the concept of spiritual warfare. Players assume the role of a **Guardian Spirit** protecting a human soul from the "Storm of Sin." Instead of killing enemies, players must **Parry** incoming "Temptations" (projectiles) using the Shield of Faith and **Redeem** manifestations of Vice using the Light of Truth. It is a game about patience, defense, and the transformative power of grace.
+**Lumen Fidei** is a celebration of Divine Love. Players act as a Guardian of the Soul, navigating the "Storm of Doubts" not with weapons of war, but with the **Censer of Mercy** and the **Canticle of Praise**. The goal is to fill the world with Light, converting every shadow into a radiant spark of Joy.
 
-## 2. Core Gameplay Pillars
-*   **Defensive Pacifism:** The player cannot attack or destroy in the traditional sense. Interaction is strictly defensive (parrying) or restorative (healing/redeeming).
-*   **Spiritual Warfare:** The "enemies" are abstract representations of Vices (Pride, Envy, Wrath). "Defeating" them involves filling their "Conversion Meter" until they repent and vanish into light.
-*   **The State of Grace:** The player's health is "Grace." Getting hit by temptations lowers Grace. Losing all Grace puts the soul in a state of Desolation (Game Over).
-*   **Liturgical Rhythm:** Gameplay flows in waves called "Vigils," punctuated by moments of quiet contemplation at "Altars" (checkpoints).
+## 2. The Triune Mechanics of Life
+*   **The Father (Infinite Love):**
+    *   **Hearts of Love:** When a Vice is redeemed, it leaves behind a pulsing **Heart of Love**. Collecting these restores the Guardian's Grace, representing the Father's constant embrace.
+    *   **The Father's House:** A place of rest and growth where the soul learns to love more deeply.
+*   **The Son (The Living Word):**
+    *   **The Censer of Mercy:** Sweeps away the "Fog of Sadness," replacing it with the fragrance of holiness.
+    *   **The Sign of the Cross:** A sanctuary of Light that transforms every "Temptation" into a "Truth of Love."
+*   **The Holy Spirit (Source of Joy):**
+    *   **Praise Fervor:** A meter that fills with every act of love and mercy.
+    *   **Canticle of Joy (Ultimate):** When Fervor is full, the Guardian releases a **Canticle of Joy**—a symphony of light and white doves that instantly redeems all shadows in a burst of happiness.
 
-## 3. Core Mechanics
-*   **The Shield of Faith (Parry):** The core mechanic. Players raise a radiant shield to reflect "Lies" and "Temptations" back at the Vices. A perfect parry (timed with the "clink" of a bell) converts the projectile into "Truth," which fills the Vice's Conversion Meter.
-*   **The Word (Primary Action):** Instead of a melee attack, the player projects a short-range aura of scripture. This pushes back aggressive Vices and neutralizes minor temptations without reflecting them.
-*   **Prayer (Focus System):** Successful parries build "Fervor." Players can spend Fervor to perform "Acts of Mercy" (Special Abilities), such as:
-    *   *Claritas:* A burst of light that slows down all active temptations.
-    *   *Pax:* A wave of peace that pacifies nearby Vices for a short time.
-*   **Virtues (Stats):**
-    *   **Prudence:** Increases the parry timing window.
-    *   **Justice:** Increases the effectiveness of reflected Truths (higher conversion rate).
-    *   **Temperance:** Increases max Grace (Health).
-    *   **Fortitude:** Increases resistance to "Pushback" from heavy sins.
+## 3. Core Gameplay Pillars
+*   **Radiant Happiness:** Every interaction should feel like a celebration. No "combat," only "purification through love."
+*   **The State of Grace:** A vibrant, glowing representation of the Soul's health.
+*   **Praise-Based Progression:** The more you praise and love, the more radiant you become.
 
-## 4. World & Atmosphere
-*   **Setting:** The "Interior Castle" (inspired by St. Teresa of Avila) – a metaphysical representation of the human soul. Levels range from the "Courtyard of Humility" to the "Inner Sanctum."
-*   **Enemies (Vices):**
-    *   *Whisperers (Envy):* Small, fast shadows that shoot rapid, weak doubts.
-    *   *Accusers (Pride):* Large, imposing figures that fire heavy "Judgments."
-    *   *Ragers (Wrath):* Aggressive forms that charge the player; must be pacified with "The Word."
-*   **Bosses (Cardinal Sins):** Major encounters where the player must endure a massive barrage of temptations until the Sin is exhausted and can be embraced/redeemed.
-
-## 5. Visuals & Audio
-*   **Aesthetic:** "Ethereal Renaissance." Soft lighting, stained-glass color palettes, and gold/white motifs. No blood or gore; "hits" result in ripples of water or scattering petals.
-*   **Audio:** Gregorian Chants and choral swells that build intensity as the player successfully maintains a "Chain of Virtue" (Combo).
-*   **Feedback:** "Temptations" sound dissonant and harsh. "Truths" (reflected projectiles) sound like harmonious bells.
-
-## 6. Progression
-*   **Merit:** Experience points earned by redeeming Vices.
-*   **Gifts of the Spirit:** Upgrades found at Altars.
-    *   *Example:* "Gift of Counsel" – Parrying restores a small amount of Grace to nearby allies (if multiplayer is added) or self.
+## 4. Visuals & Atmosphere
+*   **Visuals:** Warm golds, vibrant pinks (for love), and brilliant whites. Projectiles are now "Gray Doubts" that turn into "Golden Truths."
+*   **Audio:** Uplifting choral harmonies, bells, and the sound of soft laughter or joyous whispers.

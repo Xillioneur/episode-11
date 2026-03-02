@@ -29,7 +29,7 @@ const int SCREEN_WIDTH = 1440;
 const int SCREEN_HEIGHT = 900;
 
 // Gameplay Constants
-const float PLAYER_SPEED = 9.0f;
+const float PLAYER_SPEED = 10.5f;
 const float DASH_SPEED = 24.0f;
 const float DASH_DURATION = 0.25f;
 const float DASH_COST = 25.0f;
@@ -165,6 +165,9 @@ struct Guardian {
     float swingDuration = 0.45f;
     float swingArc = 140.0f * DEG2RAD;
     float swingRange = 10.0f;
+    
+    int comboStep = 0; // 0: None, 1: Humility, 2: Mercy, 3: Charity
+    float comboTimer = 0.0f; // Window to continue combo
     
     // Sign of the Cross
     bool isCrossing = false;
@@ -361,21 +364,57 @@ void UpdateGuardian(float dt) {
     guardian.facingAngle = atan2f(lookDir.x, lookDir.z);
 
     // Input: Censer of Mercy (Left Click)
+    guardian.comboTimer -= dt;
+    if (guardian.comboTimer <= 0 && !guardian.isSwinging) {
+        guardian.comboStep = 0;
+    }
+
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !guardian.isSwinging && guardian.spirit >= 10.0f) {
         guardian.isSwinging = true;
-        guardian.swingTimer = guardian.swingDuration;
         guardian.spirit -= 10.0f;
-        screenShake = 0.15f;
+        
+        // Advance Combo Step
+        guardian.comboStep++;
+        if (guardian.comboStep > 3) guardian.comboStep = 1;
+        
+        // Define Step Properties (Faster & Snappier)
+        if (guardian.comboStep == 1) { // Humility
+            guardian.swingDuration = 0.25f;
+            guardian.swingArc = 140.0f * DEG2RAD;
+            guardian.swingRange = 10.0f;
+            screenShake = 0.08f;
+        } else if (guardian.comboStep == 2) { // Mercy
+            guardian.swingDuration = 0.22f;
+            guardian.swingArc = 180.0f * DEG2RAD;
+            guardian.swingRange = 12.0f;
+            screenShake = 0.12f;
+        } else if (guardian.comboStep == 3) { // Charity
+            guardian.swingDuration = 0.35f;
+            guardian.swingArc = 360.0f * DEG2RAD;
+            guardian.swingRange = 15.0f;
+            screenShake = 0.25f;
+            SpawnMotes(guardian.pos, GOLD, 20, 10.0f);
+        }
+        
+        // Divine Lunge: Small forward burst
+        Vector3 lungeDir = {sinf(guardian.facingAngle), 0, cosf(guardian.facingAngle)};
+        guardian.pos = Vector3Add(guardian.pos, Vector3Scale(lungeDir, 3.5f));
+        
+        guardian.swingTimer = guardian.swingDuration;
     }
     
     if (guardian.isSwinging) {
         guardian.swingTimer -= dt;
-        if (guardian.swingTimer <= 0) guardian.isSwinging = false;
-        // Spawn trail particles
+        if (guardian.swingTimer <= 0) {
+            guardian.isSwinging = false;
+            guardian.comboTimer = 0.35f; // Tighter window for faster play
+        }
+        // Spawn trail particles based on step
         float progress = 1.0f - (guardian.swingTimer / guardian.swingDuration);
         float ang = guardian.facingAngle + (progress - 0.5f) * guardian.swingArc;
         Vector3 censerPos = Vector3Add(guardian.pos, {sinf(ang) * guardian.swingRange, 2.0f, cosf(ang) * guardian.swingRange});
-        SpawnMotes(censerPos, GOLD, 2, 4.0f);
+        Color trailCol = (guardian.comboStep == 3) ? GOLD : (guardian.comboStep == 2) ? WHITE : COL_GRACE;
+        SpawnMotes(censerPos, trailCol, 3, 4.0f);
     }
 
     // Input: Sign of the Cross (Space)
@@ -837,12 +876,15 @@ void DrawFrame() {
 
         if (guardian.isSwinging) {
             float progress = 1.0f - (guardian.swingTimer / guardian.swingDuration);
-            for (int i = 0; i < 20; i++) {
-                float step = (float)i / 20.0f;
-                float ang = guardian.facingAngle + (progress - 0.5f - step * 0.3f) * guardian.swingArc;
+            Color arcCol = (guardian.comboStep == 3) ? GOLD : (guardian.comboStep == 2) ? WHITE : COL_GRACE;
+            float radiusScale = (guardian.comboStep == 3) ? 1.5f : (guardian.comboStep == 2) ? 1.2f : 1.0f;
+            
+            for (int i = 0; i < 24; i++) {
+                float step = (float)i / 24.0f;
+                float ang = guardian.facingAngle + (progress - 0.5f - step * 0.25f) * guardian.swingArc;
                 Vector3 arcPos = Vector3Add(guardian.pos, {sinf(ang) * guardian.swingRange, 2.0f, cosf(ang) * guardian.swingRange});
-                DrawSphere(arcPos, 0.5f * (1.0f - step), Fade(GOLD, 0.6f * (1.0f - step)));
-                DrawLine3D(guardian.pos, arcPos, Fade(COL_GRACE, 0.15f * (1.0f - step)));
+                DrawSphere(arcPos, 0.6f * (1.0f - step) * radiusScale, Fade(arcCol, 0.6f * (1.0f - step)));
+                DrawLine3D(guardian.pos, arcPos, Fade(arcCol, 0.2f * (1.0f - step)));
             }
         }
         
@@ -966,6 +1008,13 @@ void DrawFrame() {
     
     // Instructions
     DrawText("WASD Move • L-Click Swing • R-Click Shield • SPACE Cross • F Canticle", 20, 100, 20, Fade(WHITE, 0.5f));
+    
+    // Combo Counter
+    if (guardian.comboStep > 0) {
+        const char* stepName = (guardian.comboStep == 3) ? "CHARITY" : (guardian.comboStep == 2) ? "MERCY" : "HUMILITY";
+        Color comboCol = (guardian.comboStep == 3) ? GOLD : (guardian.comboStep == 2) ? WHITE : COL_GRACE;
+        DrawText(stepName, SCREEN_WIDTH/2 - MeasureText(stepName, 50)/2, SCREEN_HEIGHT - 180, 50, Fade(comboCol, 0.8f));
+    }
     
     if (currentState == STATE_DESOLATION) {
         DrawRectangle(0,0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.8f));

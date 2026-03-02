@@ -29,8 +29,12 @@ const int SCREEN_WIDTH = 1440;
 const int SCREEN_HEIGHT = 900;
 
 // Gameplay Constants
-const float PLAYER_SPEED = 10.5f;
-const float DASH_SPEED = 24.0f;
+const float PLAYER_ACCEL = 160.0f;
+const float PLAYER_DRAG = 9.5f;
+const float PLAYER_MAX_SPEED = 20.0f;
+const float DASH_IMPULSE = 75.0f;
+const float LUNGE_IMPULSE = 52.0f;
+
 const float DASH_DURATION = 0.25f;
 const float DASH_COST = 25.0f;
 
@@ -148,10 +152,14 @@ struct LightMote {
     Color color;
     float size;
 };
-
 struct Guardian {
     Vector3 pos {0,0,0};
+    Vector3 vel {0,0,0}; // Physics-based velocity
     float facingAngle = 0.0f; 
+    
+    // Ghost Trail (After-images)
+    std::deque<Vector3> ghosts;
+    std::deque<float> ghostAngles;
     
     // The Father: Grace & Infinite Love
     float grace = BASE_MAX_GRACE;
@@ -180,6 +188,10 @@ struct Guardian {
     
     // Mechanics
     bool isShielding = false;
+    bool isPraying = false;
+    float prayerTimer = 0.0f;
+    float heartPulse = 0.0f;
+    
     float shieldTimer = 0.0f; 
     float wordCooldown = 0.0f; 
     float claritasTimer = 0.0f; 
@@ -195,12 +207,16 @@ struct Guardian {
 
     void reset() {
         pos = {0,0,0};
+        vel = {0,0,0};
+        ghosts.clear();
+        ghostAngles.clear();
         grace = maxGrace;
         spirit = maxSpirit;
         fervor = 0.0f;
         isShielding = false;
         isSwinging = false;
         isCrossing = false;
+        isPraying = false;
         swingTimer = 0.0f;
         crossTimer = 0.0f;
         isDashing = false;
@@ -278,8 +294,8 @@ void InitLumenFidei();
 void StartVigil(bool fullReset);
 void UpdateFrame(float dt);
 void DrawFrame();
-void SpawnTemptation(Vector3 pos, Vector3 vel, Color col, bool isTruth);
-void SpawnMotes(Vector3 pos, Color col, int count, float speed);
+void SpawnTemptation(Vector3 pos, Vector3 vel, Color col, bool isTruth, std::vector<Temptation>* localList = nullptr);
+void SpawnMotes(Vector3 pos, Color col, int count, float speed, std::vector<LightMote>* localList = nullptr);
 
 // ======================================================================
 // Logic
@@ -396,9 +412,10 @@ void UpdateGuardian(float dt) {
             SpawnMotes(guardian.pos, GOLD, 20, 10.0f);
         }
         
-        // Divine Lunge: Small forward burst
+        // Divine Lunge: Physics Impulse
         Vector3 lungeDir = {sinf(guardian.facingAngle), 0, cosf(guardian.facingAngle)};
-        guardian.pos = Vector3Add(guardian.pos, Vector3Scale(lungeDir, 3.5f));
+        float impulseMag = (guardian.comboStep == 3) ? LUNGE_IMPULSE * 1.5f : LUNGE_IMPULSE;
+        guardian.vel = Vector3Add(guardian.vel, Vector3Scale(lungeDir, impulseMag));
         
         guardian.swingTimer = guardian.swingDuration;
     }
@@ -407,7 +424,7 @@ void UpdateGuardian(float dt) {
         guardian.swingTimer -= dt;
         if (guardian.swingTimer <= 0) {
             guardian.isSwinging = false;
-            guardian.comboTimer = 0.35f; // Tighter window for faster play
+            guardian.comboTimer = 0.35f; 
         }
         // Spawn trail particles based on step
         float progress = 1.0f - (guardian.swingTimer / guardian.swingDuration);
@@ -428,7 +445,6 @@ void UpdateGuardian(float dt) {
     if (guardian.isCrossing) {
         guardian.crossTimer -= dt;
         if (guardian.crossTimer <= 0) guardian.isCrossing = false;
-        // Divine protection during the sign
     }
 
     // Canticle of Joy (F)
@@ -463,7 +479,6 @@ void UpdateGuardian(float dt) {
         guardian.spirit -= WORD_COST;
         guardian.wordCooldown = WORD_COOLDOWN;
         
-        // Effect: Pushback and Stun
         SpawnMotes(guardian.pos, COL_GRACE, 30, 15.0f);
         screenShake = 0.3f;
         
@@ -471,48 +486,99 @@ void UpdateGuardian(float dt) {
             float dist = Vector3Distance(v.pos, guardian.pos);
             if (dist < WORD_RADIUS) {
                 Vector3 pushDir = Vector3Normalize(Vector3Subtract(v.pos, guardian.pos));
-                v.pos = Vector3Add(v.pos, Vector3Scale(pushDir, 8.0f)); // Knockback
+                // Vices also get an impulse
+                v.pos = Vector3Add(v.pos, Vector3Scale(pushDir, 8.0f)); 
                 v.stunned = true;
                 v.stunTimer = 1.5f;
             }
         }
         
-        // Clear nearby weak temptations
         for (auto& t : temptations) {
             if (Vector3Distance(t.pos, guardian.pos) < WORD_RADIUS && !t.isTruth) {
-                t.life = 0; // Dissipate
+                t.life = 0; 
                 SpawnMotes(t.pos, WHITE, 5, 5.0f);
             }
         }
     }
     
-    // Input: Movement (WASD)
-    Vector3 input = {0,0,0};
-    if (IsKeyDown(KEY_W)) input.z -= 1;
-    if (IsKeyDown(KEY_S)) input.z += 1;
-    if (IsKeyDown(KEY_A)) input.x -= 1;
-    if (IsKeyDown(KEY_D)) input.x += 1;
-    
-    // Dash (Shift)
-    if (IsKeyPressed(KEY_LEFT_SHIFT) && guardian.spirit >= DASH_COST && !guardian.isDashing && Vector3Length(input) > 0.1f) {
-        guardian.isDashing = true;
-        guardian.dashTimer = DASH_DURATION;
-        guardian.dashDir = Vector3Normalize(input);
-        guardian.spirit -= DASH_COST;
+    // Input: Prayer of Contemplation (Hold R)
+    if (IsKeyDown(KEY_R) && !guardian.isSwinging && !guardian.isDashing) {
+        guardian.isPraying = true;
+        guardian.vel = Vector3Lerp(guardian.vel, {0,0,0}, 15.0f * dt);
+        guardian.grace = std::min(guardian.grace + 15.0f * dt, guardian.maxGrace);
+        guardian.fervor = std::min(guardian.fervor + 50.0f * dt, guardian.maxFervor);
+        
+        if (fmodf(GetTime(), 0.1f) < dt) {
+            SpawnMotes(Vector3Add(guardian.pos, {0, 10.0f, 0}), WHITE, 2, 5.0f);
+            SpawnMotes(guardian.pos, COL_GRACE, 1, 2.0f);
+        }
+    } else {
+        guardian.isPraying = false;
+    }
+
+    // Input: Movement (WASD) - PHYSICS ACCELERATION
+    if (!guardian.isPraying) {
+        Vector3 accel = {0,0,0};
+        if (IsKeyDown(KEY_W)) accel.z -= 1;
+        if (IsKeyDown(KEY_S)) accel.z += 1;
+        if (IsKeyDown(KEY_A)) accel.x -= 1;
+        if (IsKeyDown(KEY_D)) accel.x += 1;
+        
+        if (Vector3Length(accel) > 0.1f) {
+            accel = Vector3Normalize(accel);
+            guardian.vel = Vector3Add(guardian.vel, Vector3Scale(accel, PLAYER_ACCEL * dt));
+        }
+        
+        // Dash (Shift) - PHYSICS IMPULSE
+        if (IsKeyPressed(KEY_LEFT_SHIFT) && guardian.spirit >= DASH_COST && !guardian.isDashing && Vector3Length(accel) > 0.1f) {
+            guardian.isDashing = true;
+            guardian.dashTimer = DASH_DURATION;
+            guardian.dashDir = accel;
+            guardian.spirit -= DASH_COST;
+            guardian.vel = Vector3Add(guardian.vel, Vector3Scale(accel, DASH_IMPULSE));
+        }
     }
     
     if (guardian.isDashing) {
-        guardian.pos = Vector3Add(guardian.pos, Vector3Scale(guardian.dashDir, DASH_SPEED * dt));
         guardian.dashTimer -= dt;
         if (guardian.dashTimer <= 0) guardian.isDashing = false;
         SpawnMotes(guardian.pos, COL_SPIRIT, 1, 2.0f);
-    } else if (Vector3Length(input) > 0.1f) {
-        guardian.pos = Vector3Add(guardian.pos, Vector3Scale(Vector3Normalize(input), PLAYER_SPEED * dt));
+    }
+    
+    // Apply Drag / Friction
+    float dragFactor = 1.0f - (PLAYER_DRAG * dt);
+    if (dragFactor < 0) dragFactor = 0;
+    guardian.vel = Vector3Scale(guardian.vel, dragFactor);
+    
+    // Cap Speed
+    float currentSpeed = Vector3Length(guardian.vel);
+    if (currentSpeed > PLAYER_MAX_SPEED && !guardian.isDashing) {
+        guardian.vel = Vector3Scale(Vector3Normalize(guardian.vel), PLAYER_MAX_SPEED);
+    }
+    
+    // Update Position
+    guardian.pos = Vector3Add(guardian.pos, Vector3Scale(guardian.vel, dt));
+    
+    // Ghost Trail Logic
+    currentSpeed = Vector3Length(guardian.vel);
+    if (currentSpeed > 4.0f || guardian.isSwinging || guardian.isDashing || guardian.isCrossing) {
+        guardian.ghosts.push_front(guardian.pos);
+        guardian.ghostAngles.push_front(guardian.facingAngle);
+    }
+    
+    size_t maxGhosts = (currentSpeed > PLAYER_MAX_SPEED) ? 24 : 12;
+    while (guardian.ghosts.size() > maxGhosts) {
+        guardian.ghosts.pop_back();
+        guardian.ghostAngles.pop_back();
+    }
+    if (currentSpeed < 2.0f && !guardian.ghosts.empty()) {
+        guardian.ghosts.pop_back();
+        guardian.ghostAngles.pop_back();
     }
     
     // Clamp
-    guardian.pos.x = Clamp(guardian.pos.x, -80, 80);
-    guardian.pos.z = Clamp(guardian.pos.z, -80, 80);
+    guardian.pos.x = Clamp(guardian.pos.x, -120, 120);
+    guardian.pos.z = Clamp(guardian.pos.z, -120, 120);
 }
 
 void UpdateVices(float dt) {
@@ -523,12 +589,17 @@ void UpdateVices(float dt) {
     if (numThreads == 0) numThreads = 4;
     size_t chunk = (num + numThreads - 1) / numThreads;
 
+    // Result buffers to avoid mutex contention
+    std::vector<std::vector<Temptation>> threadTemps(numThreads);
+    std::vector<std::vector<LightMote>> threadMotes(numThreads);
+
     std::vector<std::future<void>> futures;
     for (size_t t = 0; t < numThreads; ++t) {
         size_t start = t * chunk;
         size_t endd = std::min(start + chunk, num);
-        
-        futures.push_back(g_pool->enqueue([start, endd, dt]() {
+        if (start >= endd) continue;
+
+        futures.push_back(g_pool->enqueue([start, endd, dt, t, &threadTemps, &threadMotes]() {
             for (size_t i = start; i < endd; ++i) {
                 Vice& v = vices[i];
                 if (v.redeemed) {
@@ -552,11 +623,11 @@ void UpdateVices(float dt) {
 
                             if (fabs(angleDiff) < guardian.swingArc / 2.0f) {
                                 v.corruption.store(v.corruption - 50.0f * dt * 10.0f); // Fast conversion on hit
-                                SpawnMotes(v.pos, COL_GRACE, 2, 5.0f);
+                                SpawnMotes(v.pos, COL_GRACE, 2, 5.0f, &threadMotes[t]);
                                 if (v.corruption <= 0) {
                                     v.redeemed = true;
                                     guardian.merit.fetch_add(100);
-                                    SpawnMotes(v.pos, GOLD, 50, 10.0f);
+                                    SpawnMotes(v.pos, GOLD, 50, 10.0f, &threadMotes[t]);
                                 }
                             }
                         }
@@ -581,19 +652,19 @@ void UpdateVices(float dt) {
                     if (v.attackTimer <= 0.0f) {
                         // Attack logic
                         if (v.type == WHISPERER) {
-                            SpawnTemptation(v.pos, Vector3Scale(dir, 18.0f), COL_TEMPTATION, false);
+                            SpawnTemptation(v.pos, Vector3Scale(dir, 18.0f), COL_TEMPTATION, false, &threadTemps[t]);
                             v.attackTimer = 1.5f;
                         } else if (v.type == ACCUSER) {
                             // Shotgun blast
                              for(int k=-1; k<=1; k++) {
                                  Vector3 spread = Vector3RotateByAxisAngle(dir, {0,1,0}, k * 0.2f);
-                                 SpawnTemptation(v.pos, Vector3Scale(spread, 14.0f), COL_TEMPTATION, false);
+                                 SpawnTemptation(v.pos, Vector3Scale(spread, 14.0f), COL_TEMPTATION, false, &threadTemps[t]);
                              }
                              v.attackTimer = 3.0f;
                         } else if (v.type == RAGER) {
                             // Charge
                             v.pos = Vector3Add(v.pos, Vector3Scale(dir, 10.0f)); 
-                            SpawnTemptation(v.pos, Vector3Scale(dir, 25.0f), MAROON, false);
+                            SpawnTemptation(v.pos, Vector3Scale(dir, 25.0f), MAROON, false, &threadTemps[t]);
                             v.attackTimer = 2.0f;
                         } else if (v.type == CARDINAL_SIN) {
                             // Phase 1: Cross Pattern
@@ -601,13 +672,13 @@ void UpdateVices(float dt) {
                             for (int k = 0; k < 4; k++) {
                                 float ang = angOffset + k * PI/2;
                                 Vector3 crossDir = {cosf(ang), 0, sinf(ang)};
-                                SpawnTemptation(v.pos, Vector3Scale(crossDir, 16.0f), COL_TEMPTATION, false);
+                                SpawnTemptation(v.pos, Vector3Scale(crossDir, 16.0f), COL_TEMPTATION, false, &threadTemps[t]);
                             }
                             
                             // Phase 2: Rapid Doubts (Targeted)
                             if (fmodf(GetTime(), 4.0f) > 2.0f) {
                                 Vector3 spread = Vector3RotateByAxisAngle(dir, {0,1,0}, (float)GetRandomValue(-20, 20) * 0.01f);
-                                SpawnTemptation(v.pos, Vector3Scale(spread, 22.0f), MAROON, false);
+                                SpawnTemptation(v.pos, Vector3Scale(spread, 22.0f), MAROON, false, &threadTemps[t]);
                             }
                             
                             v.attackTimer = 0.5f;
@@ -618,6 +689,16 @@ void UpdateVices(float dt) {
         }));
     }
     for (auto& fut : futures) fut.wait();
+
+    // Merge results back to main thread
+    for (int t = 0; t < numThreads; t++) {
+        if (!threadTemps[t].empty()) {
+            temptations.insert(temptations.end(), threadTemps[t].begin(), threadTemps[t].end());
+        }
+        if (!threadMotes[t].empty()) {
+            motes.insert(motes.end(), threadMotes[t].begin(), threadMotes[t].end());
+        }
+    }
     
     // Clean up redeemed souls
     for (auto it = vices.begin(); it != vices.end();) {
@@ -633,12 +714,26 @@ void UpdateTemptations(float dt) {
     float timeScale = (guardian.claritasTimer > 0) ? CLARITAS_SLOW_FACTOR : 1.0f;
     float currentDt = dt * timeScale;
 
-    // 1. Move
-    for (auto& t : temptations) {
-        t.pos = Vector3Add(t.pos, Vector3Scale(t.vel, currentDt));
-        t.life -= currentDt;
-        t.trail.push_front(t.pos);
-        if (t.trail.size() > 12) t.trail.pop_back();
+    size_t numT = temptations.size();
+    if (numT > 0) {
+        unsigned int numThreads = std::thread::hardware_concurrency();
+        if (numThreads == 0) numThreads = 4;
+        size_t chunk = (numT + numThreads - 1) / numThreads;
+        std::vector<std::future<void>> futures;
+        for (size_t t = 0; t < numThreads; ++t) {
+            size_t start = t * chunk;
+            size_t endd = std::min(start + chunk, numT);
+            futures.push_back(g_pool->enqueue([start, endd, currentDt]() {
+                for (size_t i = start; i < endd; ++i) {
+                    Temptation& temp = temptations[i];
+                    temp.pos = Vector3Add(temp.pos, Vector3Scale(temp.vel, currentDt));
+                    temp.life -= currentDt;
+                    temp.trail.push_front(temp.pos);
+                    if (temp.trail.size() > 12) temp.trail.pop_back();
+                }
+            }));
+        }
+        for (auto& fut : futures) fut.wait();
     }
     
     // 2. Collision with Guardian (Censer Swing, Shield, or Body)
@@ -760,7 +855,7 @@ void UpdateTemptations(float dt) {
         [](const Temptation& t){ return t.life <= 0; }), temptations.end());
 }
 
-void SpawnTemptation(Vector3 pos, Vector3 vel, Color col, bool isTruth) {
+void SpawnTemptation(Vector3 pos, Vector3 vel, Color col, bool isTruth, std::vector<Temptation>* localList) {
     Temptation t;
     t.pos = pos;
     t.pos.y = 2.0f;
@@ -769,12 +864,15 @@ void SpawnTemptation(Vector3 pos, Vector3 vel, Color col, bool isTruth) {
     t.life = 5.0f;
     t.isTruth = isTruth;
     
-    std::lock_guard<std::mutex> lock(sharedMutex);
-    temptations.push_back(t);
+    if (localList) {
+        localList->push_back(t);
+    } else {
+        std::lock_guard<std::mutex> lock(sharedMutex);
+        temptations.push_back(t);
+    }
 }
 
-void SpawnMotes(Vector3 pos, Color col, int count, float speed) {
-    std::lock_guard<std::mutex> lock(sharedMutex);
+void SpawnMotes(Vector3 pos, Color col, int count, float speed, std::vector<LightMote>* localList) {
     for(int i=0; i<count; i++) {
         LightMote m;
         m.pos = pos;
@@ -784,7 +882,13 @@ void SpawnMotes(Vector3 pos, Color col, int count, float speed) {
         m.life = 1.0f;
         m.maxLife = 1.0f;
         m.size = (float)GetRandomValue(2,5) / 10.0f;
-        motes.push_back(m);
+        
+        if (localList) {
+            localList->push_back(m);
+        } else {
+            std::lock_guard<std::mutex> lock(sharedMutex);
+            motes.push_back(m);
+        }
     }
 }
 
@@ -794,9 +898,11 @@ void UpdateFrame(float dt) {
     
     // Camera follow
     Vector3 targetPos = guardian.pos;
-    // Add mouse peek
-    Vector3 mouseOffset = Vector3Subtract(GetScreenToWorldRay(GetMousePosition(), camera).position, guardian.pos);
-    // Rough approx since raycasting to ground plane is needed for perfect peek, just use simple lerp for now
+    
+    // Dynamic FOV Punch
+    float currentSpeed = Vector3Length(guardian.vel);
+    float targetFOV = 55.0f + (currentSpeed / PLAYER_MAX_SPEED) * 12.0f;
+    camera.fovy = Lerp(camera.fovy, targetFOV, 10.0f * dt);
     
     camera.target = Vector3Lerp(camera.target, targetPos, 5.0f * dt);
     if (screenShake > 0) {
@@ -827,11 +933,28 @@ void UpdateFrame(float dt) {
         }
     }
     
-    // Update Motes
-    for(auto& m : motes) {
-        m.pos = Vector3Add(m.pos, Vector3Scale(m.vel, dt));
-        m.life -= dt;
+    // Update Motes (Parallel)
+    size_t numMotes = motes.size();
+    if (numMotes > 0) {
+        unsigned int numThreads = std::thread::hardware_concurrency();
+        if (numThreads == 0) numThreads = 4;
+        size_t chunk = (numMotes + numThreads - 1) / numThreads;
+        std::vector<std::future<void>> futures;
+        for (size_t t = 0; t < numThreads; ++t) {
+            size_t start = t * chunk;
+            size_t endd = std::min(start + chunk, numMotes);
+            futures.push_back(g_pool->enqueue([start, endd, dt]() {
+                for (size_t i = start; i < endd; ++i) {
+                    LightMote& m = motes[i];
+                    m.pos = Vector3Add(m.pos, Vector3Scale(m.vel, dt));
+                    m.life -= dt;
+                }
+            }));
+        }
+        for (auto& fut : futures) fut.wait();
     }
+    
+    // Sequential Cleanup
     motes.erase(std::remove_if(motes.begin(), motes.end(), [](const LightMote& m){ return m.life <= 0; }), motes.end());
 
     // Check Win/Loss
@@ -859,6 +982,43 @@ void DrawFrame() {
             }
         }
         
+        // Saintly Ghost Trail (Radiant Ribbon & Ethereal Echoes)
+        if (!guardian.ghosts.empty()) {
+            // 1. Draw the "Life Streak" (Ribbon connecting ghosts)
+            for (size_t i = 0; i < guardian.ghosts.size() - 1; i++) {
+                float alpha = 0.4f * (1.0f - (float)i / guardian.ghosts.size());
+                Vector3 p1 = Vector3Add(guardian.ghosts[i], {0, 2.0f, 0});
+                Vector3 p2 = Vector3Add(guardian.ghosts[i+1], {0, 2.0f, 0});
+                DrawLine3D(p1, p2, Fade(COL_GRACE, alpha));
+                DrawLine3D(Vector3Add(p1, {0, 1.5f, 0}), Vector3Add(p2, {0, 1.5f, 0}), Fade(WHITE, alpha * 0.5f));
+            }
+
+            // 2. Draw the Ethereal Echoes
+            for (size_t i = 0; i < guardian.ghosts.size(); i += 2) { // Step by 2 for performance/clarity
+                float t = (float)i / guardian.ghosts.size();
+                float alpha = 0.3f * (1.0f - t);
+                float scale = 1.0f - (t * 0.4f); // Shrink as it ages
+                
+                // Divine Gradient: White -> Gold -> Pink
+                Color ghostCol = (t < 0.5f) ? ColorLerp(WHITE, COL_GRACE, t * 2.0f) : ColorLerp(COL_GRACE, PINK, (t - 0.5f) * 2.0f);
+                ghostCol = Fade(ghostCol, alpha);
+                
+                rlPushMatrix();
+                rlTranslatef(guardian.ghosts[i].x, 0, guardian.ghosts[i].z);
+                rlRotatef(guardian.ghostAngles[i] * RAD2DEG, 0, 1, 0);
+                rlScalef(scale, scale, scale);
+                
+                // Main body echo
+                DrawCylinder({0,0,0}, 0.8f, 0.8f, 3.0f, 8, ghostCol);
+                DrawSphere({0, 3.5f, 0}, 0.9f, ghostCol);
+                
+                // Glow shell
+                DrawSphere({0, 3.5f, 0}, 1.4f, Fade(ghostCol, 0.1f)); 
+                
+                rlPopMatrix();
+            }
+        }
+
         // Guardian Radiance
         DrawCylinder(guardian.pos, 1.0f, 1.0f, 3.2f, 8, COL_GRACE);
         DrawSphere(Vector3Add(guardian.pos, {0,3.5f,0}), 1.1f, COL_GRACE);
@@ -986,28 +1146,45 @@ void DrawFrame() {
     DrawText("LUMEN FIDEI", 20, 20, 40, COL_GRACE);
     DrawText(TextFormat("VIGIL %d", vigilCount), 20, 60, 30, WHITE);
     
-    // The Father (Grace)
-    DrawRectangle(20, SCREEN_HEIGHT - 60, 300, 30, Fade(BLACK, 0.5f));
-    DrawRectangle(20, SCREEN_HEIGHT - 60, 300 * (guardian.grace / guardian.maxGrace), 30, COL_GRACE);
-    DrawText("LOVE", 30, SCREEN_HEIGHT - 55, 20, BLACK);
+    // The Sacred Heart (Grace/Love)
+    float pulseSpeed = 1.0f + (1.0f - (guardian.grace / guardian.maxGrace)) * 4.0f;
+    float heartScale = 1.0f + 0.15f * sinf(GetTime() * pulseSpeed * PI * 2.0f);
+    int hX = 80, hY = SCREEN_HEIGHT - 80;
+    
+    // Heart Glow
+    DrawCircleGradient(hX, hY, 60 * heartScale, Fade(PINK, 0.3f), Fade(PINK, 0.0f));
+    DrawCircleGradient(hX, hY, 40 * heartScale, Fade(GOLD, 0.4f), Fade(GOLD, 0.0f));
+    
+    // Heart Visual (Simple procedural)
+    DrawCircle(hX - 15 * heartScale, hY - 10 * heartScale, 20 * heartScale, PINK);
+    DrawCircle(hX + 15 * heartScale, hY - 10 * heartScale, 20 * heartScale, PINK);
+    DrawTriangle({(float)hX - 35 * heartScale, (float)hY}, {(float)hX + 35 * heartScale, (float)hY}, {(float)hX, (float)hY + 40 * heartScale}, PINK);
+    
+    // Cross on Heart
+    DrawRectangle(hX - 2, hY - 30 * heartScale, 4, 40 * heartScale, Fade(WHITE, 0.8f));
+    DrawRectangle(hX - 15 * heartScale, hY - 15 * heartScale, 30 * heartScale, 4, Fade(WHITE, 0.8f));
+
+    // Love Bar (Background for Heart)
+    DrawRectangle(140, SCREEN_HEIGHT - 65, 200, 20, Fade(BLACK, 0.5f));
+    DrawRectangle(140, SCREEN_HEIGHT - 65, 200 * (guardian.grace / guardian.maxGrace), 20, PINK);
+    DrawText("LOVE", 150, SCREEN_HEIGHT - 63, 16, BLACK);
     
     // The Son (Mercy)
-    DrawRectangle(20, SCREEN_HEIGHT - 90, 250, 20, Fade(BLACK, 0.5f));
-    DrawRectangle(20, SCREEN_HEIGHT - 90, 250 * (guardian.spirit / guardian.maxSpirit), 20, COL_SPIRIT);
-    DrawText("MERCY", 30, SCREEN_HEIGHT - 90, 18, BLACK);
+    DrawRectangle(140, SCREEN_HEIGHT - 90, 180, 15, Fade(BLACK, 0.5f));
+    DrawRectangle(140, SCREEN_HEIGHT - 90, 180 * (guardian.spirit / guardian.maxSpirit), 15, COL_SPIRIT);
+    DrawText("MERCY", 150, SCREEN_HEIGHT - 90, 12, BLACK);
 
     // The Holy Spirit (Praise)
     float fervorPct = guardian.fervor / guardian.maxFervor;
-    DrawRectangle(20, SCREEN_HEIGHT - 120, 200, 15, Fade(BLACK, 0.5f));
-    DrawRectangle(20, SCREEN_HEIGHT - 120, 200 * fervorPct, 15, PINK);
-    DrawText("PRAISE", 30, SCREEN_HEIGHT - 120, 14, BLACK);
-    if (fervorPct >= 1.0f) DrawText("PRESS F - CANTICLE OF JOY", 20, SCREEN_HEIGHT - 150, 20, GOLD);
+    DrawRectangle(140, SCREEN_HEIGHT - 110, 160, 10, Fade(BLACK, 0.5f));
+    DrawRectangle(140, SCREEN_HEIGHT - 110, 160 * fervorPct, 10, GOLD);
+    if (fervorPct >= 1.0f) DrawText("PRESS F - CANTICLE OF JOY", 140, SCREEN_HEIGHT - 140, 20, GOLD);
 
     // Merit
     DrawText(TextFormat("JOY: %d", guardian.merit.load()), SCREEN_WIDTH - 250, 20, 30, GOLD);
     
     // Instructions
-    DrawText("WASD Move • L-Click Swing • R-Click Shield • SPACE Cross • F Canticle", 20, 100, 20, Fade(WHITE, 0.5f));
+    DrawText("WASD Move • L-Click Swing • R-Click Shield • SPACE Cross • F Canticle • R PRAY", 20, 100, 20, Fade(WHITE, 0.5f));
     
     // Combo Counter
     if (guardian.comboStep > 0) {
@@ -1023,12 +1200,13 @@ void DrawFrame() {
         DrawText("Press R to Rekindle", SCREEN_WIDTH/2 - MeasureText("Press R to Rekindle", 20)/2, SCREEN_HEIGHT/2 + 60, 20, WHITE);
     } else if (currentState == STATE_ALTAR) {
         DrawRectangle(0,0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.85f));
-        DrawText("ALTAR OF REFLECTION", SCREEN_WIDTH/2 - MeasureText("ALTAR OF REFLECTION", 60)/2, 100, 60, GOLD);
-        DrawText(TextFormat("Merit: %d", guardian.merit.load()), SCREEN_WIDTH/2 - MeasureText("Merit: 9999", 40)/2, 180, 40, WHITE);
+        DrawText("THE FATHER'S HOUSE", SCREEN_WIDTH/2 - MeasureText("THE FATHER'S HOUSE", 60)/2, 100, 60, GOLD);
+        DrawText("Welcome home, good and faithful servant.", SCREEN_WIDTH/2 - MeasureText("Welcome home, good and faithful servant.", 30)/2, 160, 30, LIGHTGRAY);
+        DrawText(TextFormat("Joy: %d", guardian.merit.load()), SCREEN_WIDTH/2 - 60, 220, 40, PINK);
         
-        DrawText("1. Prudence (Parry Window +0.02s) - 200 Merit", 300, 300, 30, (guardian.merit >= 200) ? GREEN : GRAY);
-        DrawText("2. Temperance (Max Grace +20) - 200 Merit", 300, 350, 30, (guardian.merit >= 200) ? GREEN : GRAY);
-        DrawText("3. Justice (Reflect Damage +15%) - 300 Merit", 300, 400, 30, (guardian.merit >= 300) ? GREEN : GRAY);
+        DrawText("1. Prudence (Wider Mercy) - 200 Joy", 300, 320, 30, (guardian.merit >= 200) ? GREEN : GRAY);
+        DrawText("2. Temperance (Deeper Love) - 200 Joy", 300, 370, 30, (guardian.merit >= 200) ? GREEN : GRAY);
+        DrawText("3. Justice (Greater Truth) - 300 Joy", 300, 420, 30, (guardian.merit >= 300) ? GREEN : GRAY);
         
         DrawText("SPACE to Begin Next Vigil", SCREEN_WIDTH/2 - MeasureText("SPACE to Begin Next Vigil", 40)/2, SCREEN_HEIGHT - 100, 40, WHITE);
     }

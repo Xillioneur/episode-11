@@ -319,6 +319,13 @@ struct SaintlyEcho {
     float scale;
 };
 
+// AI Director
+struct AIDirector {
+    std::atomic<int> attackTokens {3}; // Max simultaneous attacks
+    float tokenRegenTimer = 0.0f;
+    Vector3 predictedPlayerPos;
+};
+
 // ======================================================================
 // Globals
 // ======================================================================
@@ -336,6 +343,7 @@ bool debugMode = false;
 bool godMode = false;
 
 Guardian guardian;
+AIDirector director;
 std::vector<Vice> vices;
 std::vector<Temptation> temptations;
 std::vector<LightMote> motes;
@@ -807,41 +815,72 @@ void UpdateVices(float dt) {
                         }
                     }
 
-                    // Chase behavior
+                    // Chase behavior (Tactical)
                     Vector3 toPlayer = Vector3Subtract(guardian.pos, v.pos);
                     toPlayer.y = 0;
                     float dist = Vector3Length(toPlayer);
                     Vector3 dir = Vector3Normalize(toPlayer);
                     
-                    float keepDist = (v.type == WHISPERER) ? 20.0f : 8.0f;
-                    
-                    if (dist > keepDist) {
-                        v.pos = Vector3Add(v.pos, Vector3Scale(dir, v.moveSpeed * dt));
-                    } else if (dist < keepDist - 2.0f) {
-                        v.pos = Vector3Subtract(v.pos, Vector3Scale(dir, v.moveSpeed * 0.5f * dt));
+                    if (v.type == WHISPERER) { // KITER
+                        // Predictive Fleeing
+                        Vector3 fleeDir = Vector3Normalize(Vector3Subtract(v.pos, director.predictedPlayerPos));
+                        if (dist < 20.0f) {
+                            v.pos = Vector3Add(v.pos, Vector3Scale(fleeDir, v.moveSpeed * 1.2f * dt));
+                        } else if (dist > 30.0f) {
+                            v.pos = Vector3Add(v.pos, Vector3Scale(dir, v.moveSpeed * dt));
+                        } else {
+                            // Strafe
+                            Vector3 strafe = {dir.z, 0, -dir.x};
+                            v.pos = Vector3Add(v.pos, Vector3Scale(strafe, v.moveSpeed * 0.5f * dt));
+                        }
+                    } else if (v.type == RAGER) { // FLANKER
+                        if (guardian.isSwinging && dist < 15.0f) {
+                            // Dodge swing
+                            Vector3 dodge = {dir.z, 0, -dir.x};
+                            v.pos = Vector3Add(v.pos, Vector3Scale(dodge, v.moveSpeed * 2.0f * dt));
+                        } else {
+                            // Flank approach
+                            Vector3 flank = {dir.z, 0, -dir.x};
+                            Vector3 approach = Vector3Add(dir, Vector3Scale(flank, 0.5f));
+                            v.pos = Vector3Add(v.pos, Vector3Scale(Vector3Normalize(approach), v.moveSpeed * dt));
+                        }
+                    } else { // ACCUSER (Standard)
+                        if (dist > 15.0f) v.pos = Vector3Add(v.pos, Vector3Scale(dir, v.moveSpeed * dt));
                     }
                     
                     // Attack behavior
                     v.attackTimer -= dt;
                     if (v.attackTimer <= 0.0f) {
-                        Vector3 spawnPos = Vector3Add(v.pos, {0, 2.0f, 0}); // Fix: Spawn at chest height
-                        // Attack logic
-                        if (v.type == WHISPERER) {
-                            SpawnTemptation(spawnPos, Vector3Scale(dir, 18.0f), COL_TEMPTATION, false, &threadTemps[t]);
-                            v.attackTimer = 1.5f;
-                        } else if (v.type == ACCUSER) {
-                            // Shotgun blast
-                             for(int k=-1; k<=1; k++) {
-                                 Vector3 spread = Vector3RotateByAxisAngle(dir, {0,1,0}, k * 0.2f);
-                                 SpawnTemptation(spawnPos, Vector3Scale(spread, 14.0f), COL_TEMPTATION, false, &threadTemps[t]);
-                             }
-                             v.attackTimer = 3.0f;
-                        } else if (v.type == RAGER) {
-                            // Charge
-                            v.pos = Vector3Add(v.pos, Vector3Scale(dir, 10.0f)); 
-                            SpawnTemptation(spawnPos, Vector3Scale(dir, 25.0f), MAROON, false, &threadTemps[t]);
-                            v.attackTimer = 2.0f;
-                        } else if (v.type == CARDINAL_SIN) {
+                        Vector3 spawnPos = Vector3Add(v.pos, {0, 2.0f, 0}); 
+                        
+                        if (v.type == CARDINAL_SIN) {
+                            // Boss logic handled separately below
+                        } else if (director.attackTokens > 0) {
+                            // Regular Enemy Attack (Consumes Token)
+                            director.attackTokens--;
+                            
+                            if (v.type == WHISPERER) {
+                                // Predictive Shot
+                                Vector3 futureDir = Vector3Normalize(Vector3Subtract(director.predictedPlayerPos, spawnPos));
+                                SpawnTemptation(spawnPos, Vector3Scale(futureDir, 22.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                v.attackTimer = 1.2f;
+                            } else if (v.type == ACCUSER) {
+                                // Burst Fire
+                                Vector3 toP = Vector3Normalize(Vector3Subtract(guardian.pos, spawnPos));
+                                SpawnTemptation(spawnPos, Vector3Scale(toP, 16.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                v.attackTimer = 0.5f; // Fast burst
+                            } else if (v.type == RAGER) {
+                                // Charge Impulse
+                                v.pos = Vector3Add(v.pos, Vector3Scale(dir, 12.0f)); 
+                                SpawnTemptation(spawnPos, Vector3Scale(dir, 28.0f), MAROON, false, &threadTemps[t]);
+                                v.attackTimer = 2.5f;
+                            }
+                        } else {
+                            v.attackTimer = 0.2f; // Wait for token
+                        }
+                        
+                        // Boss Logic Block (Unchanged)
+                        if (v.type == CARDINAL_SIN) {
                             v.stateTimer -= dt;
                             Vector3 spawnPos = Vector3Add(v.pos, {0, 2.0f, 0});
                             Vector3 toGuardian = Vector3Subtract(guardian.pos, v.pos);
@@ -1243,6 +1282,14 @@ void UpdateFrame(float dt) {
     currentLineCol = ColorLerp(currentLineCol, targetLine, 2.0f * dt);
 
     mansionTitleTimer = std::max(0.0f, mansionTitleTimer - dt);
+    
+    // AI Director Update
+    director.tokenRegenTimer -= dt;
+    if (director.tokenRegenTimer <= 0) {
+        if (director.attackTokens < 3 + (vigilCount / 5)) director.attackTokens++;
+        director.tokenRegenTimer = 0.5f;
+    }
+    director.predictedPlayerPos = Vector3Add(guardian.pos, Vector3Scale(guardian.vel, 0.8f)); // Look ahead 0.8s
 
     // Mansion Hazards (F14)
     if (!guardian.isPraying) {

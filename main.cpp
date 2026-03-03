@@ -420,9 +420,8 @@ void StartVigil(bool fullReset) {
             v.type = (i % 6 == 0) ? RAGER : (i % 4 == 0) ? ACCUSER : WHISPERER;
             v.maxCorruption = (v.type == RAGER) ? 180 : (v.type == ACCUSER) ? 120 : 50;
             v.corruption.store(v.maxCorruption);
-            v.moveSpeed = (v.type == WHISPERER) ? 6.0f : 3.5f;
-            v.scale = (v.type == RAGER) ? 2.0f : (v.type == ACCUSER) ? 1.6f : 0.9f;
-            v.attackTimer = GetRandomValue(10, 50) / 10.0f;
+            v.moveSpeed = (v.type == WHISPERER) ? 9.5f : (v.type == RAGER) ? 8.0f : 7.0f;
+            v.scale = (v.type == RAGER) ? 2.0f : (v.type == ACCUSER) ? 1.6f : 0.9f;            v.attackTimer = GetRandomValue(10, 50) / 10.0f;
             
             float ang = GetRandomValue(0, 360) * DEG2RAD;
             float dist = GetRandomValue(45, 80);
@@ -822,30 +821,34 @@ void UpdateVices(float dt) {
                     Vector3 dir = Vector3Normalize(toPlayer);
                     
                     if (v.type == WHISPERER) { // KITER
-                        // Predictive Fleeing
+                        // Predictive Fleeing (Elite)
                         Vector3 fleeDir = Vector3Normalize(Vector3Subtract(v.pos, director.predictedPlayerPos));
-                        if (dist < 20.0f) {
-                            v.pos = Vector3Add(v.pos, Vector3Scale(fleeDir, v.moveSpeed * 1.2f * dt));
-                        } else if (dist > 30.0f) {
+                        float kiteSpeed = (dist < 15.0f) ? v.moveSpeed * 2.2f : v.moveSpeed; // Rapid retreat if cornered
+                        
+                        if (dist < 25.0f) {
+                            v.pos = Vector3Add(v.pos, Vector3Scale(fleeDir, kiteSpeed * dt));
+                        } else if (dist > 35.0f) {
                             v.pos = Vector3Add(v.pos, Vector3Scale(dir, v.moveSpeed * dt));
                         } else {
-                            // Strafe
+                            // Strafe with intent
                             Vector3 strafe = {dir.z, 0, -dir.x};
-                            v.pos = Vector3Add(v.pos, Vector3Scale(strafe, v.moveSpeed * 0.5f * dt));
+                            v.pos = Vector3Add(v.pos, Vector3Scale(strafe, v.moveSpeed * 0.8f * dt));
                         }
                     } else if (v.type == RAGER) { // FLANKER
-                        if (guardian.isSwinging && dist < 15.0f) {
-                            // Dodge swing
+                        if (guardian.isSwinging && dist < 18.0f) {
+                            // Explosive Dodge (Saintly Reflexes)
                             Vector3 dodge = {dir.z, 0, -dir.x};
-                            v.pos = Vector3Add(v.pos, Vector3Scale(dodge, v.moveSpeed * 2.0f * dt));
+                            if (GetRandomValue(0, 1) == 0) dodge = Vector3Negate(dodge);
+                            v.pos = Vector3Add(v.pos, Vector3Scale(dodge, v.moveSpeed * 5.5f * dt));
+                            SpawnMotes(v.pos, currentViceCol, 1, 2.0f, MOTE_SPARK, &threadMotes[t]);
                         } else {
-                            // Flank approach
+                            // High-speed flank approach
                             Vector3 flank = {dir.z, 0, -dir.x};
-                            Vector3 approach = Vector3Add(dir, Vector3Scale(flank, 0.5f));
-                            v.pos = Vector3Add(v.pos, Vector3Scale(Vector3Normalize(approach), v.moveSpeed * dt));
+                            Vector3 approach = Vector3Add(dir, Vector3Scale(flank, 0.7f));
+                            v.pos = Vector3Add(v.pos, Vector3Scale(Vector3Normalize(approach), v.moveSpeed * 1.1f * dt));
                         }
                     } else { // ACCUSER (Standard)
-                        if (dist > 15.0f) v.pos = Vector3Add(v.pos, Vector3Scale(dir, v.moveSpeed * dt));
+                        if (dist > 18.0f) v.pos = Vector3Add(v.pos, Vector3Scale(dir, v.moveSpeed * dt));
                     }
                     
                     // Attack behavior
@@ -1286,8 +1289,8 @@ void UpdateFrame(float dt) {
     // AI Director Update
     director.tokenRegenTimer -= dt;
     if (director.tokenRegenTimer <= 0) {
-        if (director.attackTokens < 3 + (vigilCount / 5)) director.attackTokens++;
-        director.tokenRegenTimer = 0.5f;
+        if (director.attackTokens < 5 + (vigilCount / 4)) director.attackTokens++;
+        director.tokenRegenTimer = 0.4f;
     }
     director.predictedPlayerPos = Vector3Add(guardian.pos, Vector3Scale(guardian.vel, 0.8f)); // Look ahead 0.8s
 

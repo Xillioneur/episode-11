@@ -29,11 +29,12 @@ const int SCREEN_WIDTH = 1440;
 const int SCREEN_HEIGHT = 900;
 
 // Gameplay Constants
-const float PLAYER_ACCEL = 160.0f;
-const float PLAYER_DRAG = 9.5f;
-const float PLAYER_MAX_SPEED = 20.0f;
-const float DASH_IMPULSE = 75.0f;
-const float LUNGE_IMPULSE = 52.0f;
+const float PLAYER_ACCEL = 220.0f;
+const float PLAYER_DRAG = 8.5f;
+const float PLAYER_MAX_SPEED = 24.0f;
+const float PLAYER_TRACTION = 6.0f;
+const float DASH_IMPULSE = 80.0f;
+const float LUNGE_IMPULSE = 55.0f;
 
 const float DASH_DURATION = 0.25f;
 const float DASH_COST = 25.0f;
@@ -160,10 +161,18 @@ struct Guardian {
     Vector3 pos {0,0,0};
     Vector3 vel {0,0,0}; // Physics-based velocity
     float facingAngle = 0.0f; 
+    float heading = 0.0f; // Current movement heading
+    float tiltX = 0.0f; // Visual lean forward/back
+    float tiltZ = 0.0f; // Visual lean side-to-side
     
     // Ghost Trail (After-images)
     std::deque<Vector3> ghosts;
     std::deque<float> ghostAngles;
+    std::deque<float> ghostTiltsX;
+    std::deque<float> ghostTiltsZ;
+    
+    // Weapon Trail (Censer Ribbon)
+    std::deque<Vector3> weaponTrail;
     
     // The Father: Grace & Infinite Love
     std::atomic<float> grace {BASE_MAX_GRACE};
@@ -212,8 +221,13 @@ struct Guardian {
     void reset() {
         pos = {0,0,0};
         vel = {0,0,0};
+        heading = 0.0f;
+        tiltX = 0.0f;
+        tiltZ = 0.0f;
         ghosts.clear();
         ghostAngles.clear();
+        ghostTiltsX.clear();
+        ghostTiltsZ.clear();
         grace.store(BASE_MAX_GRACE);
         spirit.store(BASE_MAX_SPIRIT);
         fervor.store(0);
@@ -556,26 +570,65 @@ void UpdateGuardian(float dt) {
         guardian.isPraying = false;
     }
 
-    // Input: Movement (WASD) - PHYSICS ACCELERATION
+    // Input: Movement (WASD) - KINETIC DRIFT PHYSICS
+    float currentSpeed = Vector3Length(guardian.vel);
     if (!guardian.isPraying) {
-        Vector3 accel = {0,0,0};
-        if (IsKeyDown(KEY_W)) accel.z -= 1;
-        if (IsKeyDown(KEY_S)) accel.z += 1;
-        if (IsKeyDown(KEY_A)) accel.x -= 1;
-        if (IsKeyDown(KEY_D)) accel.x += 1;
+        Vector3 inputDir = {0,0,0};
+        if (IsKeyDown(KEY_W)) inputDir.z -= 1;
+        if (IsKeyDown(KEY_S)) inputDir.z += 1;
+        if (IsKeyDown(KEY_A)) inputDir.x -= 1;
+        if (IsKeyDown(KEY_D)) inputDir.x += 1;
         
-        if (Vector3Length(accel) > 0.1f) {
-            accel = Vector3Normalize(accel);
-            guardian.vel = Vector3Add(guardian.vel, Vector3Scale(accel, PLAYER_ACCEL * dt));
+        if (Vector3Length(inputDir) > 0.1f) {
+            inputDir = Vector3Normalize(inputDir);
+            // Smoothly rotate heading towards input direction
+            float targetHeading = atan2f(inputDir.x, inputDir.z);
+            float angleDiff = targetHeading - guardian.heading;
+            while (angleDiff > PI) angleDiff -= 2*PI;
+            while (angleDiff < -PI) angleDiff += 2*PI;
+            guardian.heading += angleDiff * 10.0f * dt;
+            
+            // Apply Acceleration in Heading direction
+            Vector3 force = {sinf(guardian.heading), 0, cosf(guardian.heading)};
+            guardian.vel = Vector3Add(guardian.vel, Vector3Scale(force, PLAYER_ACCEL * dt));
+            
+            // Visual Tilting (Physics Based)
+            float turnSharpness = angleDiff * currentSpeed * 0.1f;
+            guardian.tiltZ = Lerp(guardian.tiltZ, -turnSharpness * 0.8f, 8.0f * dt);
+            guardian.tiltX = Lerp(guardian.tiltX, 0.2f + (currentSpeed / PLAYER_MAX_SPEED) * 0.2f, 5.0f * dt);
+            
+            if (fmodf(GetTime(), 0.05f) < dt && currentSpeed > 10.0f) {
+                SpawnMotes(Vector3Subtract(guardian.pos, Vector3Scale(force, 2.0f)), COL_SPIRIT, 1, 3.0f);
+            }
+        } else {
+            guardian.tiltX = Lerp(guardian.tiltX, 0.0f, 5.0f * dt);
+            guardian.tiltZ = Lerp(guardian.tiltZ, 0.0f, 5.0f * dt);
         }
         
+        // Attack Leaning (Overwrites movement tilt for impact)
+        if (guardian.isSwinging) {
+            float swingProgress = 1.0f - (guardian.swingTimer / guardian.swingDuration);
+            float leanIntensity = sinf(swingProgress * PI) * 0.8f; // Deep lunge at midpoint
+            guardian.tiltX = Lerp(guardian.tiltX, leanIntensity, 20.0f * dt);
+        }
+        
+        // Saintly Traction: Dampen lateral velocity to allow for drifts
+        if (Vector3Length(guardian.vel) > 0.1f) {
+            Vector3 forward = {sinf(guardian.heading), 0, cosf(guardian.heading)};
+            Vector3 right = {forward.z, 0, -forward.x};
+            
+            float lateralVel = Vector3DotProduct(guardian.vel, right);
+            guardian.vel = Vector3Subtract(guardian.vel, Vector3Scale(right, lateralVel * PLAYER_TRACTION * dt));
+        }
+
         // Dash (Shift) - PHYSICS IMPULSE
-        if (IsKeyPressed(KEY_LEFT_SHIFT) && guardian.spirit.load() >= DASH_COST && !guardian.isDashing && Vector3Length(accel) > 0.1f) {
+        if (IsKeyPressed(KEY_LEFT_SHIFT) && guardian.spirit.load() >= DASH_COST && !guardian.isDashing && Vector3Length(inputDir) > 0.1f) {
             guardian.isDashing = true;
             guardian.dashTimer = DASH_DURATION;
-            guardian.dashDir = accel;
+            guardian.dashDir = inputDir;
             guardian.spirit.store(guardian.spirit.load() - DASH_COST);
-            guardian.vel = Vector3Add(guardian.vel, Vector3Scale(accel, DASH_IMPULSE));
+            guardian.vel = Vector3Add(guardian.vel, Vector3Scale(inputDir, DASH_IMPULSE));
+            screenShake = 0.2f;
         }
     }
     
@@ -591,7 +644,7 @@ void UpdateGuardian(float dt) {
     guardian.vel = Vector3Scale(guardian.vel, dragFactor);
     
     // Cap Speed
-    float currentSpeed = Vector3Length(guardian.vel);
+    currentSpeed = Vector3Length(guardian.vel);
     if (currentSpeed > PLAYER_MAX_SPEED && !guardian.isDashing) {
         guardian.vel = Vector3Scale(Vector3Normalize(guardian.vel), PLAYER_MAX_SPEED);
     }
@@ -599,21 +652,53 @@ void UpdateGuardian(float dt) {
     // Update Position
     guardian.pos = Vector3Add(guardian.pos, Vector3Scale(guardian.vel, dt));
     
-    // Ghost Trail Logic
+    // 1. Weapon Trail Collection (Censer Ribbon)
+    if (guardian.isSwinging) {
+        float progress = 1.0f - (guardian.swingTimer / guardian.swingDuration);
+        float ang = guardian.facingAngle + (progress - 0.5f) * guardian.swingArc;
+        Vector3 censerPos = Vector3Add(guardian.pos, {sinf(ang) * guardian.swingRange, 2.0f, cosf(ang) * guardian.swingRange});
+        guardian.weaponTrail.push_front(censerPos);
+    }
+    while (guardian.weaponTrail.size() > 20) guardian.weaponTrail.pop_back();
+    if (!guardian.isSwinging && !guardian.weaponTrail.empty()) {
+        guardian.weaponTrail.pop_back(); // Fade out when not swinging
+    }
+
+    // 2. Ghost Trail Logic (Fixed Collapse)
     currentSpeed = Vector3Length(guardian.vel);
-    if (currentSpeed > 4.0f || guardian.isSwinging || guardian.isDashing || guardian.isCrossing) {
+    bool movedFarEnough = guardian.ghosts.empty() || Vector3Distance(guardian.pos, guardian.ghosts.front()) > 3.0f;
+    
+    // Throttle updates during stationary attacks to prevent history collapse
+    static float ghostThrottle = 0.0f;
+    ghostThrottle += dt;
+    bool actionThrottle = (guardian.isSwinging || guardian.isDashing) && ghostThrottle > 0.05f;
+
+    if ((currentSpeed > 8.0f && movedFarEnough) || actionThrottle) {
         guardian.ghosts.push_front(guardian.pos);
         guardian.ghostAngles.push_front(guardian.facingAngle);
+        guardian.ghostTiltsX.push_front(guardian.tiltX);
+        guardian.ghostTiltsZ.push_front(guardian.tiltZ);
+        ghostThrottle = 0.0f;
     }
     
-    size_t maxGhosts = (currentSpeed > PLAYER_MAX_SPEED) ? 24 : 12;
+    size_t maxGhosts = (guardian.isSwinging || guardian.isDashing) ? 12 : 4; 
     while (guardian.ghosts.size() > maxGhosts) {
         guardian.ghosts.pop_back();
         guardian.ghostAngles.pop_back();
+        guardian.ghostTiltsX.pop_back();
+        guardian.ghostTiltsZ.pop_back();
     }
-    if (currentSpeed < 2.0f && !guardian.ghosts.empty()) {
-        guardian.ghosts.pop_back();
-        guardian.ghostAngles.pop_back();
+    
+    // Only clear if completely idle
+    if (currentSpeed < 1.0f && !guardian.isSwinging && !guardian.isDashing && !guardian.ghosts.empty()) {
+        ghostThrottle += dt;
+        if (ghostThrottle > 0.1f) {
+            guardian.ghosts.pop_back();
+            guardian.ghostAngles.pop_back();
+            guardian.ghostTiltsX.pop_back();
+            guardian.ghostTiltsZ.pop_back();
+            ghostThrottle = 0.0f;
+        }
     }
     
     // Clamp
@@ -1183,47 +1268,73 @@ void DrawFrame() {
             }
         }
         
-        // Saintly Ghost Trail (Radiant Ribbon & Ethereal Echoes)
+        // Saintly Ghost Trail (Subtle Secondary Blur)
         if (!guardian.ghosts.empty()) {
-            // 1. Draw the "Life Streak" (Ribbon connecting ghosts)
-            for (size_t i = 0; i < guardian.ghosts.size() - 1; i++) {
-                float alpha = 0.4f * (1.0f - (float)i / guardian.ghosts.size());
-                Vector3 p1 = Vector3Add(guardian.ghosts[i], {0, 2.0f, 0});
-                Vector3 p2 = Vector3Add(guardian.ghosts[i+1], {0, 2.0f, 0});
-                DrawLine3D(p1, p2, Fade(COL_GRACE, alpha));
-                DrawLine3D(Vector3Add(p1, {0, 1.5f, 0}), Vector3Add(p2, {0, 1.5f, 0}), Fade(WHITE, alpha * 0.5f));
-            }
-
-            // 2. Draw the Ethereal Echoes
-            for (size_t i = 0; i < guardian.ghosts.size(); i += 2) { // Step by 2 for performance/clarity
+            BeginBlendMode(BLEND_ADDITIVE);
+            for (size_t i = 0; i < guardian.ghosts.size(); i++) {
                 float t = (float)i / guardian.ghosts.size();
-                float alpha = 0.3f * (1.0f - t);
-                float scale = 1.0f - (t * 0.4f); // Shrink as it ages
+                float alpha = 0.15f * (1.0f - t * t); 
                 
-                // Divine Gradient: White -> Gold -> Pink
-                Color ghostCol = (t < 0.5f) ? ColorLerp(WHITE, COL_GRACE, t * 2.0f) : ColorLerp(COL_GRACE, PINK, (t - 0.5f) * 2.0f);
+                // Match Player's Gold Palette
+                Color ghostCol = ColorLerp(WHITE, COL_GRACE, t);
                 ghostCol = Fade(ghostCol, alpha);
                 
                 rlPushMatrix();
                 rlTranslatef(guardian.ghosts[i].x, 0, guardian.ghosts[i].z);
                 rlRotatef(guardian.ghostAngles[i] * RAD2DEG, 0, 1, 0);
-                rlScalef(scale, scale, scale);
+                rlRotatef(guardian.ghostTiltsZ[i] * RAD2DEG, 0, 0, 1);
+                rlRotatef(guardian.ghostTiltsX[i] * RAD2DEG, 1, 0, 0);
                 
-                // Main body echo
-                DrawCylinder({0,0,0}, 0.8f, 0.8f, 3.0f, 8, ghostCol);
+                // Single faint light shell per echo
+                DrawCylinder({0,0,0}, 0.85f, 0.85f, 3.0f, 8, Fade(ghostCol, 0.6f));
                 DrawSphere({0, 3.5f, 0}, 0.9f, ghostCol);
-                
-                // Glow shell
-                DrawSphere({0, 3.5f, 0}, 1.4f, Fade(ghostCol, 0.1f)); 
                 
                 rlPopMatrix();
             }
+            EndBlendMode();
+        }
+
+        // Radiant Censer Ribbon (Weapon Trail)
+        if (!guardian.weaponTrail.empty()) {
+            BeginBlendMode(BLEND_ADDITIVE);
+            for (size_t i = 0; i < (size_t)guardian.weaponTrail.size() - 1; i++) {
+                float t = (float)i / guardian.weaponTrail.size();
+                float alpha = 0.7f * (1.0f - t);
+                Color trailCol = ColorLerp(GOLD, WHITE, 1.0f - t);
+                DrawLine3D(guardian.weaponTrail[i], guardian.weaponTrail[i+1], Fade(trailCol, alpha));
+                DrawLine3D(Vector3Add(guardian.weaponTrail[i], {0, 0.1f, 0}), Vector3Add(guardian.weaponTrail[i+1], {0, 0.1f, 0}), Fade(trailCol, alpha * 0.5f));
+            }
+            EndBlendMode();
         }
 
         // Guardian Radiance
-        DrawCylinder(guardian.pos, 1.0f, 1.0f, 3.2f, 8, COL_GRACE);
-        DrawSphere(Vector3Add(guardian.pos, {0,3.5f,0}), 1.1f, COL_GRACE);
-        DrawSphere(Vector3Add(guardian.pos, {0,3.5f,0}), 1.8f, Fade(COL_GRACE, 0.15f)); // Halo
+        rlPushMatrix();
+        rlTranslatef(guardian.pos.x, 0, guardian.pos.z);
+        rlRotatef(guardian.facingAngle * RAD2DEG, 0, 1, 0);
+        // Apply Physics Leaning (Relative to facing)
+        rlRotatef(guardian.tiltZ * RAD2DEG, 0, 0, 1);
+        rlRotatef(guardian.tiltX * RAD2DEG, 1, 0, 0);
+        
+        // Body
+        DrawCylinder({0,0,0}, 1.0f, 1.0f, 3.2f, 8, COL_GRACE);
+        // Shoulders
+        rlPushMatrix();
+        rlTranslatef(0, 3.0f, 0);
+        DrawCylinderEx({-1.5f, 0, 0}, {1.5f, 0, 0}, 0.4f, 0.4f, 8, COL_GRACE);
+        rlPopMatrix();
+        
+        // Cape (Flowing behind)
+        float capeWave = sinf(GetTime() * 10.0f) * 0.1f;
+        rlPushMatrix();
+        rlTranslatef(0, 3.0f, -0.5f);
+        rlRotatef(15.0f + guardian.tiltX * 20.0f + capeWave * 50.0f, 1, 0, 0);
+        DrawCube({0, -2.0f, -0.5f}, 2.8f, 4.0f, 0.1f, Fade(COL_GRACE, 0.4f));
+        rlPopMatrix();
+
+        // Head/Halo
+        DrawSphere({0,3.5f,0}, 1.1f, COL_GRACE);
+        DrawSphere({0,3.5f,0}, 1.8f, Fade(COL_GRACE, 0.15f)); 
+        rlPopMatrix();
         
         if (guardian.isCrossing) {
             float progress = 1.0f - (guardian.crossTimer / guardian.crossDuration);

@@ -231,13 +231,15 @@ struct Guardian {
     }
 };
 
+enum ViceState { VICE_IDLE, VICE_TELEGRAPH, VICE_ATTACK, VICE_RECOVER };
+
 struct Vice {
     ViceType type;
     Vector3 pos;
     float rotation;
     
     // Redemption Mechanic
-    std::atomic<float> corruption; // Health equivalent
+    std::atomic<float> corruption; 
     float maxCorruption;
     
     float attackTimer;
@@ -245,7 +247,11 @@ struct Vice {
     float scale;
     std::atomic<bool> redeemed {false};
     
-    // AI State
+    // AI State Machine
+    ViceState state = VICE_IDLE;
+    float stateTimer = 0.0f;
+    int patternIndex = 0;
+    
     bool stunned = false;
     float stunTimer = 0.0f;
 
@@ -256,6 +262,8 @@ struct Vice {
         type = other.type; pos = other.pos; rotation = other.rotation;
         maxCorruption = other.maxCorruption; attackTimer = other.attackTimer;
         moveSpeed = other.moveSpeed; scale = other.scale;
+        state = other.state; stateTimer = other.stateTimer;
+        patternIndex = other.patternIndex;
         stunned = other.stunned; stunTimer = other.stunTimer;
     }
     
@@ -266,6 +274,8 @@ struct Vice {
             redeemed.store(other.redeemed.load());
             maxCorruption = other.maxCorruption; attackTimer = other.attackTimer;
             moveSpeed = other.moveSpeed; scale = other.scale;
+            state = other.state; stateTimer = other.stateTimer;
+            patternIndex = other.patternIndex;
             stunned = other.stunned; stunTimer = other.stunTimer;
         }
         return *this;
@@ -343,13 +353,15 @@ void StartVigil(bool fullReset) {
     if (vigilCount % 5 == 0) {
         Vice v;
         v.type = CARDINAL_SIN;
-        // Scale HP based on Vigil
-        v.maxCorruption = 2500.0f + (vigilCount - 5) * 1500.0f;
+        // Significant health boost for Multi-Phase encounter
+        v.maxCorruption = 8000.0f + (vigilCount - 5) * 4000.0f;
         v.corruption.store(v.maxCorruption);
-        v.moveSpeed = 0.0f; 
-        v.scale = 6.0f + (vigilCount * 0.2f);
-        v.attackTimer = 2.0f;
-        v.pos = {0, 0, -40};
+        v.moveSpeed = 6.5f; // Now they can move!
+        v.scale = 6.5f + (vigilCount * 0.25f);
+        v.state = VICE_IDLE;
+        v.stateTimer = 0.8f; // Faster start
+        v.attackTimer = 0.0f;
+        v.pos = {0, 0, -50};
         vices.push_back(std::move(v));
     } else {
         int count = 6 + (vigilCount * 2);
@@ -700,41 +712,131 @@ void UpdateVices(float dt) {
                             SpawnTemptation(spawnPos, Vector3Scale(dir, 25.0f), MAROON, false, &threadTemps[t]);
                             v.attackTimer = 2.0f;
                         } else if (v.type == CARDINAL_SIN) {
-                            if (vigilCount == 5) { // PRIDE
-                                // Phase 1: Cross Pattern
-                                float angOffset = (float)GetTime() * 0.5f;
-                                for (int k = 0; k < 4; k++) {
-                                    float ang = angOffset + k * PI/2;
-                                    Vector3 crossDir = {cosf(ang), 0, sinf(ang)};
-                                    SpawnTemptation(spawnPos, Vector3Scale(crossDir, 16.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                            v.stateTimer -= dt;
+                            Vector3 spawnPos = Vector3Add(v.pos, {0, 2.0f, 0});
+                            Vector3 toGuardian = Vector3Subtract(guardian.pos, v.pos);
+                            float distToG = Vector3Length(toGuardian);
+                            Vector3 dirToG = Vector3Normalize(toGuardian);
+
+                            if (v.state == VICE_IDLE) {
+                                // Relentless Pursuit
+                                v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, v.moveSpeed * dt));
+                                
+                                if (v.stateTimer <= 0) {
+                                    v.state = VICE_TELEGRAPH;
+                                    v.stateTimer = 0.65f; // Fast telegraph
+                                    // High chance for melee if player is close
+                                    if (distToG < 22.0f) v.patternIndex = (GetRandomValue(0, 10) < 7) ? 2 : GetRandomValue(0, 1);
+                                    else v.patternIndex = GetRandomValue(0, 1);
                                 }
-                                v.attackTimer = 0.5f;
-                            } else if (vigilCount == 10) { // GREED (Golden Rain)
-                                for(int k=0; k<12; k++) {
-                                    float rx = (float)GetRandomValue(-60, 60);
-                                    float rz = (float)GetRandomValue(-60, 60);
-                                    // Higher spawn for "Rain" feel
-                                    Vector3 rainPos = { rx, 45.0f, rz };
-                                    Vector3 rainVel = { 0, -22.0f, 0 }; 
-                                    SpawnTemptation(rainPos, rainVel, GOLD, false, &threadTemps[t]);
+                            } else if (v.state == VICE_TELEGRAPH) {
+                                // Slow down but keep tracking
+                                v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, v.moveSpeed * 0.3f * dt));
+                                if (v.stateTimer <= 0) {
+                                    v.state = VICE_ATTACK;
+                                    v.stateTimer = (v.patternIndex == 2) ? 0.8f : 2.5f; 
                                 }
-                                v.attackTimer = 0.15f; 
-                            } else if (vigilCount == 15) { // ENVY (Closing Ring)
-                                float ringRadius = 30.0f;
-                                for(int k=0; k<12; k++) {
-                                    float ang = (float)k / 12.0f * 2 * PI;
-                                    Vector3 sPos = Vector3Add(guardian.pos, {cosf(ang)*ringRadius, 2.0f, sinf(ang)*ringRadius});
-                                    Vector3 sDir = Vector3Normalize(Vector3Subtract(guardian.pos, sPos));
-                                    SpawnTemptation(sPos, Vector3Scale(sDir, 10.0f), GREEN, false, &threadTemps[t]);
+                            } else if (v.state == VICE_ATTACK) {
+                                // Move at half speed while attacking
+                                v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, v.moveSpeed * 0.5f * dt));
+                                
+                                v.attackTimer -= dt;
+                                if (v.attackTimer <= 0) {
+                                    if (vigilCount == 5) { // PRIDE
+                                        if (v.patternIndex == 0) { // Cross Burst
+                                            for (int k = 0; k < 8; k++) {
+                                                float ang = k * PI/4 + GetTime() * 2.0f;
+                                                Vector3 crossDir = {cosf(ang), 0, sinf(ang)};
+                                                SpawnTemptation(spawnPos, Vector3Scale(crossDir, 22.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 0.3f;
+                                        } else if (v.patternIndex == 1) { // Focused Doubts
+                                            for(int k=-3; k<=3; k++) {
+                                                Vector3 spread = Vector3RotateByAxisAngle(dirToG, {0,1,0}, k * 0.12f);
+                                                SpawnTemptation(spawnPos, Vector3Scale(spread, 28.0f), MAROON, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 0.12f;
+                                        } else { // MELEE: Divine Rebuke
+                                            for(int k=0; k<48; k++) {
+                                                float ang = (float)k/48.0f * 2*PI;
+                                                Vector3 d = {cosf(ang), 0, sinf(ang)};
+                                                SpawnTemptation(spawnPos, Vector3Scale(d, 40.0f), GOLD, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 0.8f;
+                                            screenShake = 0.5f;
+                                        }
+                                    } else if (vigilCount == 10) { // GREED
+                                        if (v.patternIndex == 0) { // Hyper Rain
+                                            for(int k=0; k<25; k++) {
+                                                Vector3 rPos = { guardian.pos.x + GetRandomValue(-40,40), 50.0f, guardian.pos.z + GetRandomValue(-40,40) };
+                                                SpawnTemptation(rPos, {0,-35,0}, GOLD, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 0.06f;
+                                        } else if (v.patternIndex == 1) { // Spiral Coin
+                                            for(int k=0; k<4; k++) {
+                                                float a = GetTime() * 10.0f + k * PI/2;
+                                                SpawnTemptation(spawnPos, {cosf(a)*20, 0, sinf(a)*20}, GOLD, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 0.1f;
+                                        } else { // MELEE: Avarice Storm
+                                            for(int k=0; k<15; k++) {
+                                                Vector3 offset = {(float)GetRandomValue(-20,20), 0, (float)GetRandomValue(-20,20)};
+                                                SpawnTemptation(Vector3Add(v.pos, offset), {0, 5, 0}, GOLD, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 0.05f;
+                                        }
+                                    } else if (vigilCount == 15) { // ENVY
+                                        if (v.patternIndex == 0) { // Converging Ring
+                                            float r = 45.0f;
+                                            for(int k=0; k<32; k++) {
+                                                float a = (float)k/32.0f * 2*PI;
+                                                Vector3 p = Vector3Add(guardian.pos, {cosf(a)*r, 2.0f, sinf(a)*r});
+                                                SpawnTemptation(p, Vector3Scale(Vector3Normalize(Vector3Subtract(guardian.pos, p)), 18.0f), GREEN, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 2.0f;
+                                        } else if (v.patternIndex == 1) { // Mimic Strike
+                                            SpawnTemptation(spawnPos, Vector3Scale(dirToG, 55.0f), GREEN, false, &threadTemps[t]);
+                                            v.attackTimer = 0.04f;
+                                        } else { // MELEE: Mirror Blast
+                                            for(int k=0; k<60; k++) {
+                                                float a = (float)k/60.0f * 2*PI;
+                                                SpawnTemptation(spawnPos, Vector3Scale({cosf(a), 0, sinf(a)}, 35.0f), GREEN, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 0.8f;
+                                        }
+                                    } else { // WRATH
+                                        if (v.patternIndex == 0) { // Sunfire Beam
+                                            for(int k=-5; k<=5; k++) {
+                                                Vector3 s = Vector3RotateByAxisAngle(dirToG, {0,1,0}, k * 0.08f + sinf(GetTime()*15)*0.4f);
+                                                SpawnTemptation(spawnPos, Vector3Scale(s, 35.0f), RED, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 0.03f;
+                                        } else if (v.patternIndex == 1) { // Chaos Nova
+                                            for(int k=0; k<40; k++) {
+                                                float a = (float)k/40.0f * 2*PI + GetTime();
+                                                SpawnTemptation(spawnPos, Vector3Scale({cosf(a), 0, sinf(a)}, 30.0f), MAROON, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 0.5f;
+                                        } else { // MELEE: Blood Lunge
+                                            v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, 25.0f * dt * 60.0f)); // Super fast lunge
+                                            for(int k=0; k<60; k++) {
+                                                float a = (float)k/60.0f * 2*PI;
+                                                SpawnTemptation(v.pos, Vector3Scale({cosf(a), 0, sinf(a)}, 20.0f), RED, false, &threadTemps[t]);
+                                            }
+                                            v.attackTimer = 0.8f;
+                                            screenShake = 0.7f;
+                                        }
+                                    }
                                 }
-                                v.attackTimer = 2.5f;
-                            } else { // WRATH (Hellfire)
-                                Vector3 toP = Vector3Normalize(Vector3Subtract(guardian.pos, v.pos));
-                                for(int k=-2; k<=2; k++) {
-                                    Vector3 spread = Vector3RotateByAxisAngle(toP, {0,1,0}, k * 0.15f);
-                                    SpawnTemptation(spawnPos, Vector3Scale(spread, 28.0f), RED, false, &threadTemps[t]);
+                                if (v.stateTimer <= 0) {
+                                    v.state = VICE_RECOVER;
+                                    v.stateTimer = 0.85f; // Extremely short recovery
                                 }
-                                v.attackTimer = 0.15f; // Very fast
+                            } else if (v.state == VICE_RECOVER) {
+                                if (v.stateTimer <= 0) {
+                                    v.state = VICE_IDLE;
+                                    v.stateTimer = 0.5f; // Ready to chase again almost immediately
+                                }
                             }
                         }
                     }
@@ -969,7 +1071,7 @@ void UpdateFrame(float dt) {
         if (IsKeyPressed(KEY_G)) godMode = !godMode;
         if (IsKeyPressed(KEY_M)) guardian.merit.fetch_add(1000);
         if (IsKeyPressed(KEY_P)) guardian.fervor.store(1000);
-        if (IsKeyPressed(KEY_K)) { for(auto& v : vices) v.corruption = 0; }
+        if (IsKeyPressed(KEY_K)) { for(auto& v : vices) v.corruption.store(-1.0f); }
     }
 
     // Biome Color Interpolation
@@ -1184,15 +1286,25 @@ void DrawFrame() {
             Color vCol = (v.stunned) ? GRAY : (v.type == CARDINAL_SIN) ? COL_BOSS : currentViceCol;
             if (v.redeemed) vCol = GOLD;
             
+            Vector3 drawPos = v.pos;
             if (v.type == CARDINAL_SIN) {
+                if (v.state == VICE_TELEGRAPH) {
+                    // Shake and Flash
+                    drawPos.x += (float)GetRandomValue(-10, 10) * 0.05f;
+                    drawPos.z += (float)GetRandomValue(-10, 10) * 0.05f;
+                    vCol = ColorLerp(vCol, RED, 0.5f + 0.5f * sinf(GetTime() * 20.0f));
+                } else if (v.state == VICE_RECOVER) {
+                    vCol = Fade(GRAY, 0.6f);
+                }
+
                 // Boss Visual
-                DrawSphere(v.pos, v.scale * 1.5f, vCol);
-                DrawSphere(v.pos, v.scale * 2.2f, Fade(vCol, 0.15f)); 
+                DrawSphere(drawPos, v.scale * 1.5f, vCol);
+                DrawSphere(drawPos, v.scale * 2.2f, Fade(vCol, 0.15f)); 
                 // Crown
                 for (int i=0; i<8; i++) {
                     float ang = i * PI/4 + GetTime();
                     Vector3 spike = {cosf(ang) * v.scale, v.scale * 2.0f, sinf(ang) * v.scale};
-                    DrawLine3D(v.pos, Vector3Add(v.pos, spike), GOLD);
+                    DrawLine3D(drawPos, Vector3Add(drawPos, spike), GOLD);
                 }
             } else {
                 DrawSphere(v.pos, v.scale * 1.5f, vCol);

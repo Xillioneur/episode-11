@@ -178,6 +178,9 @@ struct Guardian {
     float parryWindow = 0.22f;
     float mercyRadius = 14.0f;
     float truthSpeedMult = 1.0f;
+    float meritMult = 1.0f;
+    float fervorRegenMult = 1.0f;
+    float dashCostMult = 1.0f;
     float haloScale = 1.0f;
     
     // Divine Leveling (Seamless Upgrades)
@@ -253,6 +256,9 @@ struct Guardian {
         parryWindow = 0.22f;
         mercyRadius = 14.0f;
         truthSpeedMult = 1.0f;
+        meritMult = 1.0f;
+        fervorRegenMult = 1.0f;
+        dashCostMult = 1.0f;
         haloScale = 1.0f;
         level = 1;
         spiritPoints = 0;
@@ -502,22 +508,27 @@ void UpdateGuardian(float dt) {
     // Input: Divine Inspirations (Spend Spirit Points)
     if (guardian.spiritPoints > 0) {
         if (IsKeyPressed(KEY_ONE)) {
-            guardian.parryWindow += 0.025f;
-            guardian.haloScale += 0.12f;
-            guardian.spiritPoints--;
-            SpawnMotes(guardian.pos, WHITE, 25, 10.0f);
+            guardian.parryWindow += 0.04f; guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            SpawnMotes(guardian.pos, WHITE, 30, 12.0f);
         } else if (IsKeyPressed(KEY_TWO)) {
-            guardian.truthSpeedMult += 0.20f;
-            guardian.haloScale += 0.12f;
-            guardian.spiritPoints--;
-            SpawnMotes(guardian.pos, GOLD, 25, 10.0f);
+            guardian.truthSpeedMult += 0.40f; guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            SpawnMotes(guardian.pos, GOLD, 30, 12.0f);
         } else if (IsKeyPressed(KEY_THREE)) {
-            guardian.maxGrace += 30.0f;
+            guardian.maxGrace += 50.0f;
             float g = guardian.grace.load();
-            guardian.grace.store(g + 30.0f);
-            guardian.haloScale += 0.12f;
-            guardian.spiritPoints--;
-            SpawnMotes(guardian.pos, PINK, 25, 10.0f);
+            guardian.grace.store(g + 50.0f);
+            guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            SpawnMotes(guardian.pos, PINK, 30, 12.0f);
+        } else if (IsKeyPressed(KEY_FOUR)) {
+            guardian.dashCostMult *= 0.85f; 
+            guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            SpawnMotes(guardian.pos, SKYBLUE, 30, 12.0f);
+        } else if (IsKeyPressed(KEY_FIVE)) {
+            guardian.meritMult += 0.25f; guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            SpawnMotes(guardian.pos, GOLD, 30, 12.0f, MOTE_DOVE);
+        } else if (IsKeyPressed(KEY_SIX)) {
+            guardian.fervorRegenMult += 0.35f; guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            SpawnMotes(guardian.pos, ORANGE, 30, 12.0f);
         }
     }
 
@@ -719,11 +730,12 @@ void UpdateGuardian(float dt) {
         }
 
         // Dash (Shift) - PHYSICS IMPULSE
-        if (IsKeyPressed(KEY_LEFT_SHIFT) && guardian.spirit.load() >= DASH_COST && !guardian.isDashing && Vector3Length(inputDir) > 0.1f) {
+        float currentDashCost = DASH_COST * guardian.dashCostMult;
+        if (IsKeyPressed(KEY_LEFT_SHIFT) && guardian.spirit.load() >= currentDashCost && !guardian.isDashing && Vector3Length(inputDir) > 0.1f) {
             guardian.isDashing = true;
             guardian.dashTimer = DASH_DURATION;
             guardian.dashDir = inputDir;
-            guardian.spirit.store(guardian.spirit.load() - DASH_COST);
+            guardian.spirit.store(guardian.spirit.load() - currentDashCost);
             guardian.vel = Vector3Add(guardian.vel, Vector3Scale(inputDir, DASH_IMPULSE));
             screenShake = 0.2f;
         }
@@ -1134,7 +1146,7 @@ void UpdateTemptations(float dt) {
                             if (v.corruption <= 0) {
                                 bool alreadyRedeemed = v.redeemed.exchange(true);
                                 if (!alreadyRedeemed) {
-                                    guardian.merit.fetch_add(100);
+                                    guardian.merit.fetch_add((int)(100 * guardian.meritMult));
                                     SpawnMotes(v.pos, GOLD, 50, 10.0f, MOTE_SPARK, &threadMotes[t]);
                                     
                                     if (GetRandomValue(0, 100) < 35) {
@@ -1188,8 +1200,8 @@ void UpdateTemptations(float dt) {
                             temp.color = COL_TRUTH;
                             temp.life = 6.0f;
                             SpawnMotes(temp.pos, COL_GRACE, 12, 12.0f, MOTE_SPARK, &threadMotes[t]);
-                            guardian.merit.fetch_add(5); 
-                            guardian.fervor.fetch_add(10); 
+                            guardian.merit.fetch_add((int)(5 * guardian.meritMult)); 
+                            guardian.fervor.fetch_add((int)(10 * guardian.fervorRegenMult)); 
                             continue;
                         }
                     }
@@ -1224,7 +1236,7 @@ void UpdateTemptations(float dt) {
                             temp.life = 5.0f;
                             SpawnMotes(temp.pos, COL_GRACE, 10, 10.0f, MOTE_SPARK, &threadMotes[t]);
                             if (perfect) {
-                                guardian.fervor.fetch_add(5);
+                                guardian.fervor.fetch_add((int)(5 * guardian.fervorRegenMult));
                             }
                         } else if (guardian.hitStun <= 0.0f && !guardian.isDashing) {
                             // HIT handled on main thread or via atomic
@@ -1815,23 +1827,33 @@ void DrawFrame() {
     DrawRectangle(20, 170, 200 * xpProgress, 6, GOLD);
 
     if (guardian.spiritPoints > 0) {
-        int panelW = 480, panelH = 240;
+        int panelW = 750, panelH = 220;
         int pX = 20, pY = 200;
         
-        DrawRectangle(pX, pY, panelW, panelH, Fade(BLACK, 0.7f));
+        DrawRectangle(pX, pY, panelW, panelH, Fade(BLACK, 0.75f));
         DrawRectangleLines(pX, pY, panelW, panelH, Fade(GOLD, 0.9f));
         
-        DrawText(TextFormat("DIVINE GIFTS (%d AVAILABLE)", guardian.spiritPoints), pX + 20, pY + 15, 24, GOLD);
-        DrawText("Spend your Spirit Points to grow in holiness:", pX + 20, pY + 45, 18, WHITE);
+        DrawText(TextFormat("DIVINE GIFTS (%d SPIRIT POINTS)", guardian.spiritPoints), pX + 20, pY + 15, 24, GOLD);
         
-        DrawText("1. PRUDENCE: The All-Seeing Eye", pX + 30, pY + 85, 20, SKYBLUE);
-        DrawText("   \"Widen the window of your divine defense.\"", pX + 30, pY + 105, 16, LIGHTGRAY);
+        // Column 1
+        DrawText("1. PRUDENCE (+18% Vision)", pX + 30, pY + 60, 18, SKYBLUE);
+        DrawText("   Widen your divine defense window.", pX + 30, pY + 80, 14, LIGHTGRAY);
         
-        DrawText("2. JUSTICE: The Radiant Strike", pX + 30, pY + 135, 20, GOLD);
-        DrawText("   \"Increase the power and speed of Truth.\"", pX + 30, pY + 155, 16, LIGHTGRAY);
+        DrawText("2. JUSTICE (+40% Speed)", pX + 30, pY + 110, 18, GOLD);
+        DrawText("   Overwhelming force for Truth.", pX + 30, pY + 130, 14, LIGHTGRAY);
         
-        DrawText("3. TEMPERANCE: The Eternal Heart", pX + 30, pY + 185, 20, PINK);
-        DrawText("   \"Deepen your soul's capacity for Love.\"", pX + 30, pY + 205, 16, LIGHTGRAY);
+        DrawText("3. TEMPERANCE (+50 Love)", pX + 30, pY + 160, 18, PINK);
+        DrawText("   Deepen your heart's capacity.", pX + 30, pY + 180, 14, LIGHTGRAY);
+
+        // Column 2
+        DrawText("4. FORTITUDE (+20% Acceleration)", pX + 380, pY + 60, 18, WHITE);
+        DrawText("   Move faster, dash for less Spirit.", pX + 380, pY + 80, 14, LIGHTGRAY);
+        
+        DrawText("5. WISDOM (+25% Joy Gain)", pX + 380, pY + 110, 18, LIME);
+        DrawText("   Grow faster from every redemption.", pX + 380, pY + 130, 14, LIGHTGRAY);
+        
+        DrawText("6. COUNSEL (+30% Praise Gain)", pX + 380, pY + 160, 18, ORANGE);
+        DrawText("   The Holy Spirit's fire burns brighter.", pX + 380, pY + 180, 14, LIGHTGRAY);
     }
 
     // Active Blessings List

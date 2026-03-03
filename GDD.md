@@ -1,21 +1,26 @@
 # Game Design Document: Lumen Fidei – The Joy of the Trinity
 
 ## 1. Executive Summary
-**Lumen Fidei** is a seamless spiritual journey. The Guardian grows in power through the accumulation of **Joy**, which leads to higher **Levels of Sanctity**.
+**Lumen Fidei** is a seamless spiritual journey. The Guardian grows in power through **Levels of Sanctity**, unlocking powerful and cumulative **Divine Inspirations**.
 
-## 2. Levels of Sanctity (Continuous Growth)
-Instead of a simple one-time trigger, Joy now fuels a continuous leveling system.
-*   **Spirit Points:** Every level-up grants a Spirit Point.
-*   **The Inspiration Treasury:** A persistent menu on your HUD that allows you to spend your Spirit Points on cumulative upgrades.
-*   **No Limits:** You can continue to level up and improve your stats indefinitely, reflecting the infinite nature of divine grace.
+## 2. Expanded Divine Inspirations
+Every level-up grants a **Spirit Point**. These can be spent instantly on six distinct paths of growth, each with significant power increases.
 
-### Cumulative Upgrades:
-*   **Prudence (The All-Seeing Eye):** Each point further widens the parry window.
-*   **Justice (The Radiant Strike):** Each point increases reflection speed and redemption power.
-*   **Temperance (The Eternal Heart):** Each point adds more health to your Sacred Heart.
-*   **Fortitude (The Divine Engine):** Each point increases acceleration and reduces dash cost.
+### The Six Paths of Growth:
+1.  **Prudence (The All-Seeing Eye):** +18% Parry Window.
+    *   "Widen your soul's vision to reflect the thorns of doubt with greater ease."
+2.  **Justice (The Radiant Strike):** +40% Reflection Speed & Power.
+    *   "Sanctified Truths fly faster and redeem Vices with overwhelming force."
+3.  **Temperance (The Eternal Heart):** +50 Max Love capacity.
+    *   "Deepen your heart's ability to remain in the Father's embrace."
+4.  **Fortitude (The Divine Engine):** +20% Acceleration & -20% Dash Cost.
+    *   "Move with the speed of light and dash through the storm with tireless resolve."
+5.  **Wisdom (The Well of Joy):** +25% Joy (Merit) Gain.
+    *   "Gain deeper insight from every act of redemption, accelerating your growth."
+6.  **Counsel (The Spirit's Breath):** +30% Praise (Fervor) Generation.
+    *   "The Holy Spirit's fire burns brighter within you, fueling your Canticles."
 
 ## 3. Core Gameplay Pillars
-*   **Indefinite Scaling:** Your power grows as long as you continue to redeem Vices.
-*   **Strategic Choice:** Save your points for expensive high-tier blessings or spend them immediately for steady growth.
-*   **Freeing Progression:** Manage your growth while moving; the menu only appears when you have points to spend.
+*   **Uninterrupted Ascension:** The HUD shop remains active while you move, allowing for rapid real-time build customization.
+*   **Heroic Scaling:** By late-game Vigils, the Guardian becomes a blinding force of nature.
+*   **Numerical Clarity:** The benefits of each choice are clearly displayed.

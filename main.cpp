@@ -174,6 +174,17 @@ struct Guardian {
     float tiltX = 0.0f; // Visual lean forward/back
     float tiltZ = 0.0f; // Visual lean side-to-side
     
+    // Dynamic Stats (Upgradable)
+    float parryWindow = 0.22f;
+    float mercyRadius = 14.0f;
+    float truthSpeedMult = 1.0f;
+    float haloScale = 1.0f;
+    
+    // Divine Leveling (Seamless Upgrades)
+    int level = 1;
+    int spiritPoints = 0;
+    int nextLevelJoy = 1000;
+    
     // Active Blessings (Permanent for run)
     bool hasCharity = false;   // Auto-collect hearts
     bool hasPurity = false;    // Reduce hitstun
@@ -238,6 +249,15 @@ struct Guardian {
         heading = 0.0f;
         tiltX = 0.0f;
         tiltZ = 0.0f;
+        
+        parryWindow = 0.22f;
+        mercyRadius = 14.0f;
+        truthSpeedMult = 1.0f;
+        haloScale = 1.0f;
+        level = 1;
+        spiritPoints = 0;
+        nextLevelJoy = 1000;
+
         hasCharity = false;
         hasPurity = false;
         hasFortitude = false;
@@ -276,6 +296,7 @@ struct Vice {
     float attackTimer;
     float moveSpeed;
     float scale;
+    float formationAngle; // Assigned slot in the circle around player
     std::atomic<bool> redeemed {false};
     
     // AI State Machine
@@ -421,7 +442,9 @@ void StartVigil(bool fullReset) {
             v.maxCorruption = (v.type == RAGER) ? 180 : (v.type == ACCUSER) ? 120 : 50;
             v.corruption.store(v.maxCorruption);
             v.moveSpeed = (v.type == WHISPERER) ? 9.5f : (v.type == RAGER) ? 8.0f : 7.0f;
-            v.scale = (v.type == RAGER) ? 2.0f : (v.type == ACCUSER) ? 1.6f : 0.9f;            v.attackTimer = GetRandomValue(10, 50) / 10.0f;
+            v.scale = (v.type == RAGER) ? 2.0f : (v.type == ACCUSER) ? 1.6f : 0.9f;
+            v.formationAngle = ((float)i / count) * 2.0f * PI; // Coordinated spread
+            v.attackTimer = GetRandomValue(10, 50) / 10.0f;
             
             float ang = GetRandomValue(0, 360) * DEG2RAD;
             float dist = GetRandomValue(45, 80);
@@ -475,6 +498,28 @@ void UpdateGuardian(float dt) {
     Vector3 groundPos = Vector3Add(ray.position, Vector3Scale(ray.direction, t));
     Vector3 lookDir = Vector3Subtract(groundPos, guardian.pos);
     guardian.facingAngle = atan2f(lookDir.x, lookDir.z);
+
+    // Input: Divine Inspirations (Spend Spirit Points)
+    if (guardian.spiritPoints > 0) {
+        if (IsKeyPressed(KEY_ONE)) {
+            guardian.parryWindow += 0.025f;
+            guardian.haloScale += 0.12f;
+            guardian.spiritPoints--;
+            SpawnMotes(guardian.pos, WHITE, 25, 10.0f);
+        } else if (IsKeyPressed(KEY_TWO)) {
+            guardian.truthSpeedMult += 0.20f;
+            guardian.haloScale += 0.12f;
+            guardian.spiritPoints--;
+            SpawnMotes(guardian.pos, GOLD, 25, 10.0f);
+        } else if (IsKeyPressed(KEY_THREE)) {
+            guardian.maxGrace += 30.0f;
+            float g = guardian.grace.load();
+            guardian.grace.store(g + 30.0f);
+            guardian.haloScale += 0.12f;
+            guardian.spiritPoints--;
+            SpawnMotes(guardian.pos, PINK, 25, 10.0f);
+        }
+    }
 
     // Input: Censer of Mercy (Left Click)
     guardian.comboTimer -= dt;
@@ -814,41 +859,39 @@ void UpdateVices(float dt) {
                         }
                     }
 
-                    // Chase behavior (Tactical)
+                    // Chase behavior (Tactical & Coordinated)
                     Vector3 toPlayer = Vector3Subtract(guardian.pos, v.pos);
                     toPlayer.y = 0;
                     float dist = Vector3Length(toPlayer);
                     Vector3 dir = Vector3Normalize(toPlayer);
                     
-                    if (v.type == WHISPERER) { // KITER
-                        // Predictive Fleeing (Elite)
-                        Vector3 fleeDir = Vector3Normalize(Vector3Subtract(v.pos, director.predictedPlayerPos));
-                        float kiteSpeed = (dist < 15.0f) ? v.moveSpeed * 2.2f : v.moveSpeed; // Rapid retreat if cornered
-                        
-                        if (dist < 25.0f) {
-                            v.pos = Vector3Add(v.pos, Vector3Scale(fleeDir, kiteSpeed * dt));
-                        } else if (dist > 35.0f) {
-                            v.pos = Vector3Add(v.pos, Vector3Scale(dir, v.moveSpeed * dt));
-                        } else {
-                            // Strafe with intent
-                            Vector3 strafe = {dir.z, 0, -dir.x};
-                            v.pos = Vector3Add(v.pos, Vector3Scale(strafe, v.moveSpeed * 0.8f * dt));
+                    // 1. Coordinated Formation Target
+                    v.formationAngle += 0.2f * dt; // Slow orbit
+                    float targetDist = (v.type == WHISPERER) ? 30.0f : (v.type == ACCUSER) ? 22.0f : 12.0f;
+                    Vector3 formationOffset = { cosf(v.formationAngle) * targetDist, 0, sinf(v.formationAngle) * targetDist };
+                    Vector3 targetPos = Vector3Add(guardian.pos, formationOffset);
+                    Vector3 formationDir = Vector3Normalize(Vector3Subtract(targetPos, v.pos));
+
+                    // 2. Separation Force (Avoid Clumping)
+                    Vector3 separation = {0,0,0};
+                    for (const auto& other : vices) {
+                        if (&other == &v) continue;
+                        float d = Vector3Distance(v.pos, other.pos);
+                        if (d < 6.0f) {
+                            separation = Vector3Add(separation, Vector3Scale(Vector3Normalize(Vector3Subtract(v.pos, other.pos)), (6.0f - d) * 2.0f));
                         }
-                    } else if (v.type == RAGER) { // FLANKER
-                        if (guardian.isSwinging && dist < 18.0f) {
-                            // Explosive Dodge (Saintly Reflexes)
-                            Vector3 dodge = {dir.z, 0, -dir.x};
-                            if (GetRandomValue(0, 1) == 0) dodge = Vector3Negate(dodge);
-                            v.pos = Vector3Add(v.pos, Vector3Scale(dodge, v.moveSpeed * 5.5f * dt));
-                            SpawnMotes(v.pos, currentViceCol, 1, 2.0f, MOTE_SPARK, &threadMotes[t]);
-                        } else {
-                            // High-speed flank approach
-                            Vector3 flank = {dir.z, 0, -dir.x};
-                            Vector3 approach = Vector3Add(dir, Vector3Scale(flank, 0.7f));
-                            v.pos = Vector3Add(v.pos, Vector3Scale(Vector3Normalize(approach), v.moveSpeed * 1.1f * dt));
-                        }
-                    } else { // ACCUSER (Standard)
-                        if (dist > 18.0f) v.pos = Vector3Add(v.pos, Vector3Scale(dir, v.moveSpeed * dt));
+                    }
+
+                    // 3. Apply Combined Forces
+                    Vector3 finalMoveDir = Vector3Normalize(Vector3Add(Vector3Scale(formationDir, 1.0f), Vector3Scale(separation, 1.5f)));
+                    v.pos = Vector3Add(v.pos, Vector3Scale(finalMoveDir, v.moveSpeed * dt));
+
+                    if (v.type == RAGER && dist < 18.0f && guardian.isSwinging) {
+                        // Elite Reflex Dodge (unchanged but faster)
+                        Vector3 dodge = {dir.z, 0, -dir.x};
+                        if (GetRandomValue(0, 1) == 0) dodge = Vector3Negate(dodge);
+                        v.pos = Vector3Add(v.pos, Vector3Scale(dodge, v.moveSpeed * 6.0f * dt));
+                        SpawnMotes(v.pos, currentViceCol, 1, 2.0f, MOTE_SPARK, &threadMotes[t]);
                     }
                     
                     // Attack behavior
@@ -1174,8 +1217,8 @@ void UpdateTemptations(float dt) {
                         bool blocked = guardian.isShielding && (fabs(angleDiff) < SHIELD_ARC / 2.0f);
                         
                         if (blocked) {
-                            bool perfect = guardian.shieldTimer < PARRY_WINDOW;
-                            temp.vel = Vector3Scale(Vector3Normalize(Vector3Negate(temp.vel)), Vector3Length(temp.vel) * 1.5f);
+                            bool perfect = guardian.shieldTimer < guardian.parryWindow;
+                            temp.vel = Vector3Scale(Vector3Normalize(Vector3Negate(temp.vel)), Vector3Length(temp.vel) * 1.5f * guardian.truthSpeedMult);
                             temp.isTruth = true;
                             temp.color = COL_TRUTH;
                             temp.life = 5.0f;
@@ -1341,6 +1384,15 @@ void UpdateFrame(float dt) {
     UpdateVices(dt);
     UpdateTemptations(dt);
     
+    // Divine Leveling (F20)
+    while (guardian.merit >= guardian.nextLevelJoy) {
+        guardian.level++;
+        guardian.spiritPoints++;
+        guardian.nextLevelJoy += 1000 + (guardian.level * 150); // Progressive scaling
+        SpawnMotes(guardian.pos, GOLD, 60, 12.0f, MOTE_DOVE);
+        screenShake = 0.3f;
+    }
+
     // Update Divine Love
     for (auto it = loveHearts.begin(); it != loveHearts.end();) {
         it->life -= dt;
@@ -1420,7 +1472,8 @@ void UpdateFrame(float dt) {
     // Check Win/Loss
     if (guardian.grace.load() <= 0) currentState = STATE_DESOLATION;
     if (vices.empty()) {
-        currentState = STATE_ALTAR;
+        vigilCount++;
+        StartVigil(false);
     }
 }
 
@@ -1506,7 +1559,7 @@ void DrawFrame() {
 
         // Head/Halo
         DrawSphere({0,3.5f,0}, 1.1f, COL_GRACE);
-        DrawSphere({0,3.5f,0}, 1.8f, Fade(COL_GRACE, 0.15f)); 
+        DrawSphere({0,3.5f,0}, 1.8f * guardian.haloScale, Fade(COL_GRACE, 0.15f)); 
         rlPopMatrix();
         
         if (guardian.isCrossing) {
@@ -1755,13 +1808,39 @@ void DrawFrame() {
         DrawRectangle(SCREEN_WIDTH/2 - textW/2, SCREEN_HEIGHT/2 - 30, textW, 2, Fade(GOLD, alpha));
     }
 
+    // Divine Leveling HUD (F20)
+    DrawText(TextFormat("SANCTITY LEVEL %d", guardian.level), 20, 140, 24, GOLD);
+    float xpProgress = (float)guardian.merit.load() / guardian.nextLevelJoy;
+    DrawRectangle(20, 170, 200, 6, Fade(BLACK, 0.5f));
+    DrawRectangle(20, 170, 200 * xpProgress, 6, GOLD);
+
+    if (guardian.spiritPoints > 0) {
+        int panelW = 480, panelH = 240;
+        int pX = 20, pY = 200;
+        
+        DrawRectangle(pX, pY, panelW, panelH, Fade(BLACK, 0.7f));
+        DrawRectangleLines(pX, pY, panelW, panelH, Fade(GOLD, 0.9f));
+        
+        DrawText(TextFormat("DIVINE GIFTS (%d AVAILABLE)", guardian.spiritPoints), pX + 20, pY + 15, 24, GOLD);
+        DrawText("Spend your Spirit Points to grow in holiness:", pX + 20, pY + 45, 18, WHITE);
+        
+        DrawText("1. PRUDENCE: The All-Seeing Eye", pX + 30, pY + 85, 20, SKYBLUE);
+        DrawText("   \"Widen the window of your divine defense.\"", pX + 30, pY + 105, 16, LIGHTGRAY);
+        
+        DrawText("2. JUSTICE: The Radiant Strike", pX + 30, pY + 135, 20, GOLD);
+        DrawText("   \"Increase the power and speed of Truth.\"", pX + 30, pY + 155, 16, LIGHTGRAY);
+        
+        DrawText("3. TEMPERANCE: The Eternal Heart", pX + 30, pY + 185, 20, PINK);
+        DrawText("   \"Deepen your soul's capacity for Love.\"", pX + 30, pY + 205, 16, LIGHTGRAY);
+    }
+
     // Active Blessings List
     if (guardian.hasCharity || guardian.hasPurity || guardian.hasFortitude) {
-        DrawText("BLESSINGS:", 20, 140, 20, GOLD);
-        int offset = 0;
-        if (guardian.hasCharity) { DrawText("• Aura of Charity", 30, 170 + offset, 18, LIGHTGRAY); offset += 25; }
-        if (guardian.hasPurity) { DrawText("• Veil of Purity", 30, 170 + offset, 18, LIGHTGRAY); offset += 25; }
-        if (guardian.hasFortitude) { DrawText("• Spirit of Fortitude", 30, 170 + offset, 18, LIGHTGRAY); offset += 25; }
+        DrawText("BLESSINGS:", 20, (guardian.spiritPoints > 0) ? 460 : 200, 20, GOLD);
+        int offset = (guardian.spiritPoints > 0) ? 490 : 230;
+        if (guardian.hasCharity) { DrawText("• Aura of Charity", 30, offset, 18, LIGHTGRAY); offset += 25; }
+        if (guardian.hasPurity) { DrawText("• Veil of Purity", 30, offset, 18, LIGHTGRAY); offset += 25; }
+        if (guardian.hasFortitude) { DrawText("• Spirit of Fortitude", 30, offset, 18, LIGHTGRAY); offset += 25; }
     }
 
     // Instructions
@@ -1779,17 +1858,6 @@ void DrawFrame() {
         DrawText("DESOLATION", SCREEN_WIDTH/2 - MeasureText("DESOLATION", 60)/2, SCREEN_HEIGHT/2 - 50, 60, RED);
         DrawText("The light has faded...", SCREEN_WIDTH/2 - MeasureText("The light has faded...", 30)/2, SCREEN_HEIGHT/2 + 20, 30, GRAY);
         DrawText("Press R to Rekindle", SCREEN_WIDTH/2 - MeasureText("Press R to Rekindle", 20)/2, SCREEN_HEIGHT/2 + 60, 20, WHITE);
-    } else if (currentState == STATE_ALTAR) {
-        DrawRectangle(0,0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.85f));
-        DrawText("THE FATHER'S HOUSE", SCREEN_WIDTH/2 - MeasureText("THE FATHER'S HOUSE", 60)/2, 100, 60, GOLD);
-        DrawText("Welcome home, good and faithful servant.", SCREEN_WIDTH/2 - MeasureText("Welcome home, good and faithful servant.", 30)/2, 160, 30, LIGHTGRAY);
-        DrawText(TextFormat("Joy: %d", guardian.merit.load()), SCREEN_WIDTH/2 - 60, 220, 40, PINK);
-        
-        DrawText("1. Prudence (Wider Mercy) - 200 Joy", 300, 320, 30, (guardian.merit >= 200) ? GREEN : GRAY);
-        DrawText("2. Temperance (Deeper Love) - 200 Joy", 300, 370, 30, (guardian.merit >= 200) ? GREEN : GRAY);
-        DrawText("3. Justice (Greater Truth) - 300 Joy", 300, 420, 30, (guardian.merit >= 300) ? GREEN : GRAY);
-        
-        DrawText("SPACE to Begin Next Vigil", SCREEN_WIDTH/2 - MeasureText("SPACE to Begin Next Vigil", 40)/2, SCREEN_HEIGHT - 100, 40, WHITE);
     }
     
     EndDrawing();
@@ -1821,26 +1889,6 @@ int main() {
                 StartVigil(true);
                 currentState = STATE_VIGIL;
             }
-        } else if (currentState == STATE_ALTAR) {
-            if (IsKeyPressed(KEY_ONE) && guardian.merit >= 200) {
-                guardian.merit -= 200;
-                // Prudence logic would go here (parry window constant needs to become variable)
-            }
-            if (IsKeyPressed(KEY_TWO) && guardian.merit >= 200) {
-                guardian.merit -= 200;
-                guardian.maxGrace += 20;
-                guardian.grace.store(guardian.grace.load() + 20.0f);
-            }
-            if (IsKeyPressed(KEY_THREE) && guardian.merit >= 300) {
-                guardian.merit -= 300;
-                // Justice logic
-            }
-            if (IsKeyPressed(KEY_SPACE)) {
-                vigilCount++;
-                StartVigil(false);
-                currentState = STATE_VIGIL;
-            }
-            UpdateFrame(0); // Update camera only? Or just pause. 0 dt pauses physics.
         } else {
             UpdateFrame(dt);
         }

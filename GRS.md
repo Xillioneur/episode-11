@@ -1,25 +1,21 @@
 # Game Requirements Specification (GRS): Lumen Fidei – The Joy of the Trinity
 
 ## 1. Technical Requirements
-*   **Engine/Framework:** C++ with Raylib (3D).
-*   **Target Platform:** macOS.
-*   **Physics Engine:** Update the Kinetic Drift model to support external **Force Fields** (wind/currents).
+*   **Spirit Point Logic:** Implement a mapping between `Merit` (Joy) and `Level`. 
+*   **Formula:** `Level = Merit / 1000`. Each level grants 1 `SpiritPoint`.
 
 ## 2. Functional Requirements
-*   **F14: Mansion Hazards:**
-    *   **Wind Force:** Implement a periodic vector force applied to the Guardian's velocity in Mansion II.
-    *   **Centripetal Pull:** Implement a distance-based force toward {0,0,0} in Mansion III.
-*   **F15: Sacred Geometry Patterns:**
-    *   Implement **Spiral** and **Parametric** math for projectile velocity calculation.
-*   **F16: Saintly Echoes:**
-    *   Implement a post-redemption state for Vices that provides a proximity-based Fervor buff.
+*   **F20: Persistent Inspiration Shop:**
+    *   Trigger: The menu appears whenever `guardian.spiritPoints > 0`.
+    *   Selection: Press `1`, `2`, or `3` to spend a point. The menu stays until all points are spent.
+*   **F21: Incremental Stat Boosts:**
+    *   Upgrades must be additive and have no hard cap.
+*   **F22: Visual Progression:**
+    *   Guardian's halo scale and brightness increase with `Level`.
 
 ## 3. Content Requirements
-*   **Visual Assets:**
-    *   Visual representation of wind (dust motes).
-    *   Visual representation of whirlpools (ripples on the stained glass).
-*   **AI:**
-    *   New pattern-based projectile spawning functions.
+*   **Shop UI:** Display the number of available Spirit Points clearly.
+*   **Feedback:** Sound and visual "ding" upon leveling up.
 
 ## 4. Non-Functional Requirements
-*   **Determinism:** Parallel projectile physics must remain consistent under hazard forces.
+*   **Zero-Lag UI:** Ensure the persistent menu does not interfere with mouse-aiming or character responsiveness.

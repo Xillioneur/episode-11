@@ -148,6 +148,15 @@ struct LoveHeart {
 
 enum MoteType { MOTE_SPARK, MOTE_DOVE, MOTE_HEART };
 
+enum BlessingType { BLESS_CHARITY, BLESS_PURITY, BLESS_FORTITUDE, BLESS_NONE };
+
+struct BlessingItem {
+    Vector3 pos;
+    BlessingType type;
+    float life;
+    float floatOffset;
+};
+
 struct LightMote {
     Vector3 pos;
     Vector3 vel;
@@ -164,6 +173,11 @@ struct Guardian {
     float heading = 0.0f; // Current movement heading
     float tiltX = 0.0f; // Visual lean forward/back
     float tiltZ = 0.0f; // Visual lean side-to-side
+    
+    // Active Blessings (Permanent for run)
+    bool hasCharity = false;   // Auto-collect hearts
+    bool hasPurity = false;    // Reduce hitstun
+    bool hasFortitude = false; // Increased acceleration
     
     // Ghost Trail (After-images)
     std::deque<Vector3> ghosts;
@@ -224,6 +238,9 @@ struct Guardian {
         heading = 0.0f;
         tiltX = 0.0f;
         tiltZ = 0.0f;
+        hasCharity = false;
+        hasPurity = false;
+        hasFortitude = false;
         ghosts.clear();
         ghostAngles.clear();
         ghostTiltsX.clear();
@@ -317,7 +334,11 @@ std::vector<Vice> vices;
 std::vector<Temptation> temptations;
 std::vector<LightMote> motes;
 std::vector<LoveHeart> loveHearts;
+std::vector<BlessingItem> blessingItems;
 Camera3D camera = {0};
+
+float mansionTitleTimer = 0.0f;
+std::string currentMansionName = "";
 ThreadPool* g_pool = nullptr;
 std::mutex sharedMutex;
 
@@ -395,6 +416,22 @@ void StartVigil(bool fullReset) {
         }
     }
     initialViceCount = (int)vices.size();
+
+    // Mansion Transition Detection
+    if (vigilCount == 1 || vigilCount == 6 || vigilCount == 11 || vigilCount == 16 || vigilCount == 21) {
+        mansionTitleTimer = 4.0f;
+        if (vigilCount == 1) currentMansionName = "Mansion I: The Courtyard of Humility";
+        else if (vigilCount == 6) currentMansionName = "Mansion II: The Desert of Temptation";
+        else if (vigilCount == 11) currentMansionName = "Mansion III: The Sea of Peace";
+        else if (vigilCount == 16) currentMansionName = "Mansion IV: The Inner Sanctum";
+        else currentMansionName = "Mansion V: The Void Core";
+    }
+}
+
+// Helper for world-space text labels
+void DrawText3D(const char* text, Vector3 pos, int fontSize, Color color) {
+    Vector2 screenPos = GetWorldToScreen(pos, camera);
+    DrawText(text, (int)screenPos.x - MeasureText(text, fontSize)/2, (int)screenPos.y, fontSize, color);
 }
 
 void UpdateGuardian(float dt) {
@@ -588,9 +625,10 @@ void UpdateGuardian(float dt) {
             while (angleDiff < -PI) angleDiff += 2*PI;
             guardian.heading += angleDiff * 10.0f * dt;
             
-            // Apply Acceleration in Heading direction
+            // Apply Acceleration in Heading direction (Fortitude Buff)
+            float currentAccel = guardian.hasFortitude ? PLAYER_ACCEL * 1.4f : PLAYER_ACCEL;
             Vector3 force = {sinf(guardian.heading), 0, cosf(guardian.heading)};
-            guardian.vel = Vector3Add(guardian.vel, Vector3Scale(force, PLAYER_ACCEL * dt));
+            guardian.vel = Vector3Add(guardian.vel, Vector3Scale(force, currentAccel * dt));
             
             // Visual Tilting (Physics Based)
             float turnSharpness = angleDiff * currentSpeed * 0.1f;
@@ -1015,6 +1053,17 @@ void UpdateTemptations(float dt) {
                                         std::lock_guard<std::mutex> lock(sharedMutex);
                                         loveHearts.push_back(h);
                                     }
+
+                                    // Rare Blessing Drop (2%)
+                                    if (GetRandomValue(0, 100) < 2) {
+                                        BlessingItem b;
+                                        b.pos = v.pos; b.pos.y = 2.5f;
+                                        b.type = (BlessingType)GetRandomValue(0, 2);
+                                        b.life = 20.0f;
+                                        b.floatOffset = (float)GetRandomValue(0, 100);
+                                        std::lock_guard<std::mutex> lock(sharedMutex);
+                                        blessingItems.push_back(b);
+                                    }
                                 }
                             }
                             break;
@@ -1167,14 +1216,18 @@ void UpdateFrame(float dt) {
         targetSky = {45, 15, 15, 255}; targetFloor = {35, 10, 10, 255}; targetVice = {60, 20, 20, 255}; targetLine = {255, 255, 255, 60};
     } else if (vigilCount <= 15) { // Mansion III: Sea of Peace (Ocean)
         targetSky = {0, 20, 40, 255}; targetFloor = {0, 10, 25, 255}; targetVice = {0, 40, 40, 255}; targetLine = {0, 200, 255, 80};
-    } else { // Mansion IV: Inner Sanctum (Heaven)
+    } else if (vigilCount <= 20) { // Mansion IV: Inner Sanctum (Heaven)
         targetSky = {200, 200, 220, 255}; targetFloor = {220, 220, 240, 255}; targetVice = {80, 80, 80, 255}; targetLine = {255, 215, 0, 100};
+    } else { // Mansion V: The Void Core (Pure Light)
+        targetSky = {250, 250, 255, 255}; targetFloor = {255, 255, 255, 255}; targetVice = {100, 100, 100, 255}; targetLine = {255, 215, 0, 150};
     }
     
     currentSkyTop = ColorLerp(currentSkyTop, targetSky, 2.0f * dt);
     currentFloorBase = ColorLerp(currentFloorBase, targetFloor, 2.0f * dt);
     currentViceCol = ColorLerp(currentViceCol, targetVice, 2.0f * dt);
     currentLineCol = ColorLerp(currentLineCol, targetLine, 2.0f * dt);
+
+    mansionTitleTimer = std::max(0.0f, mansionTitleTimer - dt);
 
     // Camera follow
     Vector3 targetPos = guardian.pos;
@@ -1201,13 +1254,41 @@ void UpdateFrame(float dt) {
         it->life -= dt;
         it->pos.y = 2.0f + 0.5f * sinf(GetTime() * 3.0f + it->floatOffset);
         
+        // Aura of Charity: Drift towards player
+        if (guardian.hasCharity) {
+            Vector3 toP = Vector3Normalize(Vector3Subtract(guardian.pos, it->pos));
+            it->pos = Vector3Add(it->pos, Vector3Scale(toP, 12.0f * dt));
+        }
+
         float dist = Vector3Distance(it->pos, guardian.pos);
         if (dist < 4.0f) {
-            guardian.grace = std::min(guardian.grace + 25.0f, guardian.maxGrace);
-            SpawnMotes(it->pos, PINK, 20, 10.0f); // Pink for Love
+            float g = guardian.grace.load();
+            if (g < guardian.maxGrace) guardian.grace.store(std::min(g + 25.0f, guardian.maxGrace));
+            SpawnMotes(it->pos, PINK, 20, 10.0f, MOTE_SPARK);
             it = loveHearts.erase(it);
         } else if (it->life <= 0) {
             it = loveHearts.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Update Blessings (Relics)
+    for (auto it = blessingItems.begin(); it != blessingItems.end();) {
+        it->life -= dt;
+        it->pos.y = 2.5f + 0.3f * sinf(GetTime() * 4.0f + it->floatOffset);
+        
+        float dist = Vector3Distance(it->pos, guardian.pos);
+        if (dist < 4.5f) {
+            if (it->type == BLESS_CHARITY) guardian.hasCharity = true;
+            else if (it->type == BLESS_PURITY) guardian.hasPurity = true;
+            else if (it->type == BLESS_FORTITUDE) guardian.hasFortitude = true;
+            
+            SpawnMotes(it->pos, GOLD, 40, 15.0f, MOTE_SPARK);
+            mansionTitleTimer = 3.0f; // Brief notification pulse
+            it = blessingItems.erase(it);
+        } else if (it->life <= 0) {
+            it = blessingItems.erase(it);
         } else {
             ++it;
         }
@@ -1245,7 +1326,7 @@ void UpdateFrame(float dt) {
     motes.erase(std::remove_if(motes.begin(), motes.end(), [](const LightMote& m){ return m.life <= 0; }), motes.end());
 
     // Check Win/Loss
-    if (guardian.grace <= 0) currentState = STATE_DESOLATION;
+    if (guardian.grace.load() <= 0) currentState = STATE_DESOLATION;
     if (vices.empty()) {
         currentState = STATE_ALTAR;
     }
@@ -1384,12 +1465,20 @@ void DrawFrame() {
             float pulse = 0.3f * sinf(GetTime() * 5.0f);
             DrawSphere(h.pos, 0.8f + pulse, PINK);
             DrawSphere(h.pos, 1.2f + pulse, Fade(GOLD, 0.3f));
-            // Heart-like wings/petals
             for (int i=0; i<2; i++) {
                 float side = (i == 0) ? 1.0f : -1.0f;
                 Vector3 p = {side * 1.5f, 0.8f, 0};
                 DrawSphere(Vector3Add(h.pos, p), 0.6f, Fade(PINK, 0.6f));
             }
+        }
+
+        // Blessing Item Visuals
+        for (const auto& b : blessingItems) {
+            float p = 0.2f * sinf(GetTime() * 6.0f);
+            DrawSphere(b.pos, 1.2f + p, GOLD);
+            DrawSphereWires(b.pos, 1.8f + p, 8, 8, WHITE);
+            const char* bName = (b.type == BLESS_CHARITY) ? "Aura of Charity" : (b.type == BLESS_PURITY) ? "Veil of Purity" : "Spirit of Fortitude";
+            DrawText3D(bName, Vector3Add(b.pos, {0, 3.0f, 0}), 15, WHITE);
         }
 
         // Vices
@@ -1549,6 +1638,24 @@ void DrawFrame() {
         DrawText("TAB: Close Debug", SCREEN_WIDTH - 300, 280, 16, GOLD);
     }
     
+    // Mansion Title Overlay
+    if (mansionTitleTimer > 0) {
+        float alpha = (mansionTitleTimer > 1.0f) ? 1.0f : mansionTitleTimer;
+        int fontSize = 60;
+        int textW = MeasureText(currentMansionName.c_str(), fontSize);
+        DrawText(currentMansionName.c_str(), SCREEN_WIDTH/2 - textW/2, SCREEN_HEIGHT/2 - 100, fontSize, Fade(WHITE, alpha));
+        DrawRectangle(SCREEN_WIDTH/2 - textW/2, SCREEN_HEIGHT/2 - 30, textW, 2, Fade(GOLD, alpha));
+    }
+
+    // Active Blessings List
+    if (guardian.hasCharity || guardian.hasPurity || guardian.hasFortitude) {
+        DrawText("BLESSINGS:", 20, 140, 20, GOLD);
+        int offset = 0;
+        if (guardian.hasCharity) { DrawText("• Aura of Charity", 30, 170 + offset, 18, LIGHTGRAY); offset += 25; }
+        if (guardian.hasPurity) { DrawText("• Veil of Purity", 30, 170 + offset, 18, LIGHTGRAY); offset += 25; }
+        if (guardian.hasFortitude) { DrawText("• Spirit of Fortitude", 30, 170 + offset, 18, LIGHTGRAY); offset += 25; }
+    }
+
     // Instructions
     DrawText("WASD Move • L-Click Swing • R-Click Shield • SPACE Cross • F Canticle • R PRAY", 20, 100, 20, Fade(WHITE, 0.5f));
     

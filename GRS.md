@@ -3,26 +3,23 @@
 ## 1. Technical Requirements
 *   **Engine/Framework:** C++ with Raylib (3D).
 *   **Target Platform:** macOS.
-*   **Biome System:** Implement a shader-like color interpolation system for the sky, floor, and projectiles based on the current `Vigil` number.
+*   **Physics Engine:** Update the Kinetic Drift model to support external **Force Fields** (wind/currents).
 
 ## 2. Functional Requirements
-*   **F11: The Mansion System (Biomes):**
-    *   Vigils 1-5: Theme "Humility" (Deep Blue/Gold).
-    *   Vigils 6-10: Theme "Temptation" (Ocher/Red/White).
-    *   Each theme must change `COL_VICE` and the floor's line colors.
-*   **F12: Pax (Ability):**
-    *   Replaces the old "Word" on `E`.
-    *   Logic: Applies a `frozen` flag to all `Temptations` within range. Frozen doubts do not move or deal damage for its duration.
-*   **F13: Blessing System (Relics):**
-    *   Implement a persistent `Blessing` struct.
-    *   Example: "Veil of Purity" (reduces hit stun duration).
+*   **F14: Mansion Hazards:**
+    *   **Wind Force:** Implement a periodic vector force applied to the Guardian's velocity in Mansion II.
+    *   **Centripetal Pull:** Implement a distance-based force toward {0,0,0} in Mansion III.
+*   **F15: Sacred Geometry Patterns:**
+    *   Implement **Spiral** and **Parametric** math for projectile velocity calculation.
+*   **F16: Saintly Echoes:**
+    *   Implement a post-redemption state for Vices that provides a proximity-based Fervor buff.
 
 ## 3. Content Requirements
 *   **Visual Assets:**
-    *   Dynamic sky color interpolation.
-    *   Radiant burst visual for the **Pax** ability.
-*   **UI/UX:**
-    *   Display the current **Mansion** name upon level transition.
+    *   Visual representation of wind (dust motes).
+    *   Visual representation of whirlpools (ripples on the stained glass).
+*   **AI:**
+    *   New pattern-based projectile spawning functions.
 
 ## 4. Non-Functional Requirements
-*   **Smooth Transitions:** Environmental color changes should happen over 2-3 seconds when entering a new Mansion.
+*   **Determinism:** Parallel projectile physics must remain consistent under hazard forces.

@@ -1,25 +1,23 @@
 # Game Design Document: Lumen Fidei – The Joy of the Trinity
 
 ## 1. Executive Summary
-**Lumen Fidei** is a spiritual journey where the player, as a Guardian of the Soul, invokes the power of the **Holy Trinity** to navigate the "Storm of Doubts." The journey takes place within the **Interior Castle**, passing through distinct "Mansions" of spiritual growth.
+**Lumen Fidei** is a spiritual journey through the **Interior Castle**. The Guardian must navigate five distinct Mansions, each representing a stage of spiritual growth, culminating in the pure light of the **Void Core**.
 
 ## 2. The Triune Mechanics of Life
 *   **The Father (Infinite Love):** Provides **Hearts of Love** and **Divine Providence**.
 *   **The Son (The Living Word):** Provides the **Censer of Mercy** and the **Combos of Grace**.
 *   **The Holy Spirit (Source of Joy):** Provides **Praise Fervor** and the **Canticle of Joy**.
 
-## 3. The Path of the Five Mansions (Level Progression)
-*   **Mansion I: The Courtyard of Humility (Vigils 1-5):** A peaceful but shadowy garden. Introduction to basic Vices. Ends with the **Cardinal Sin of Pride**.
-*   **Mansion II: The Desert of Temptation (Vigils 6-10):** Harsher, warm-toned environment. Doubts move faster. Ends with the **Cardinal Sin of Greed**.
-*   **Mansion III: The Sea of Peace (Vigils 11-15):** Cool blue tones. Vices use complex "Whirlpool" patterns. Ends with the **Cardinal Sin of Envy**.
-*   **Mansion IV: The Inner Sanctum (Vigils 16-20):** Brilliant white and gold. High intensity. Ends with the **Cardinal Sin of Wrath**.
-*   **Mansion V: The Void Core:** Final trial of pure Light.
+## 3. The Trials of the Mansions (Hazards)
+*   **Mansion II (Desert): The Sirocco of Doubt.** Periodic gusts of wind that push the Guardian, testing their **Fortitude**.
+*   **Mansion III (Sea): The Undercurrent of Despair.** A subtle pull toward the center of the arena, requiring constant movement.
+*   **Mansion IV (Inner Sanctum): The Blinding Brilliance.** Radiant flares that temporarily increase Bloom, testing the player's inner vision.
 
-## 4. Acts of Mercy (Abilities)
-*   **Claritas (Q):** Time-Slow.
-*   **Pax (E - Formerly The Word):** A wave of absolute stillness that freezes doubts in the air for 2 seconds.
-*   **Sign of the Cross (Space):** Sanctuary of reflection.
+## 4. Sacred Geometry (Advanced AI)
+*   **Accusers (Pride):** Now fire in **Triquetra Spirals**—three-pointed patterns that spin as they expand.
+*   **Whisperers (Envy):** Fire **Rose Curves**—complex, petaled patterns of small doubts.
+*   **Redemption Echoes:** When a Vice is redeemed, it leaves a stationary **Saintly Echo** for 5 seconds. Standing near an echo increases **Praise Fervor** regeneration.
 
 ## 5. Visuals & Atmosphere
-*   **Dynamic Biomes:** The Stained Glass floor and sky colors transition smoothly between Mansions.
-*   **Blessings (Relics):** Rare items dropped by Vices that provide permanent buffs (e.g., "Aura of Charity" - auto-collects Hearts).
+*   **Painterly Light:** A soft, glowing aesthetic with dynamic color shifts.
+*   **Sacred Heart HUD:** Pulses with the soul's Love.

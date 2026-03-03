@@ -313,6 +313,12 @@ struct Vice {
     }
 };
 
+struct SaintlyEcho {
+    Vector3 pos;
+    float life;
+    float scale;
+};
+
 // ======================================================================
 // Globals
 // ======================================================================
@@ -335,6 +341,7 @@ std::vector<Temptation> temptations;
 std::vector<LightMote> motes;
 std::vector<LoveHeart> loveHearts;
 std::vector<BlessingItem> blessingItems;
+std::vector<SaintlyEcho> saintlyEchoes;
 Camera3D camera = {0};
 
 float mansionTitleTimer = 0.0f;
@@ -1064,6 +1071,14 @@ void UpdateTemptations(float dt) {
                                         std::lock_guard<std::mutex> lock(sharedMutex);
                                         blessingItems.push_back(b);
                                     }
+
+                                    // Spawn Saintly Echo (F16)
+                                    SaintlyEcho echo;
+                                    echo.pos = v.pos; echo.pos.y = 0.1f;
+                                    echo.life = 6.0f;
+                                    echo.scale = v.scale * 2.0f;
+                                    std::lock_guard<std::mutex> lock(sharedMutex);
+                                    saintlyEchoes.push_back(echo);
                                 }
                             }
                             break;
@@ -1228,6 +1243,33 @@ void UpdateFrame(float dt) {
     currentLineCol = ColorLerp(currentLineCol, targetLine, 2.0f * dt);
 
     mansionTitleTimer = std::max(0.0f, mansionTitleTimer - dt);
+
+    // Mansion Hazards (F14)
+    if (!guardian.isPraying) {
+        if (vigilCount >= 6 && vigilCount <= 10) { // Mansion II: Wind
+            float windStrength = 18.0f * (1.0f + 0.5f * sinf(GetTime() * 0.8f));
+            Vector3 windDir = Vector3Normalize({1.0f, 0, 0.3f * sinf(GetTime() * 0.5f)});
+            guardian.vel = Vector3Add(guardian.vel, Vector3Scale(windDir, windStrength * dt));
+            if (fmodf(GetTime(), 0.1f) < dt) SpawnMotes(Vector3Add(guardian.pos, {-20, 5, 0}), WHITE, 1, 10.0f);
+        } else if (vigilCount >= 11 && vigilCount <= 15) { // Mansion III: Whirlpool
+            Vector3 toCenter = Vector3Normalize(Vector3Subtract({0,0,0}, guardian.pos));
+            float pullStrength = Vector3Distance({0,0,0}, guardian.pos) * 0.4f;
+            guardian.vel = Vector3Add(guardian.vel, Vector3Scale(toCenter, pullStrength * dt));
+        }
+    }
+
+    // Update Saintly Echoes (F16)
+    for (auto it = saintlyEchoes.begin(); it != saintlyEchoes.end();) {
+        it->life -= dt;
+        float dist = Vector3Distance(it->pos, guardian.pos);
+        if (dist < 12.0f) {
+            // Standing in the aura of a saintly echo restores fervor fast
+            guardian.fervor.fetch_add(1); 
+            if (fmodf(GetTime(), 0.2f) < dt) SpawnMotes(guardian.pos, GOLD, 1, 2.0f);
+        }
+        if (it->life <= 0) it = saintlyEchoes.erase(it);
+        else ++it;
+    }
 
     // Camera follow
     Vector3 targetPos = guardian.pos;
@@ -1479,6 +1521,22 @@ void DrawFrame() {
             DrawSphereWires(b.pos, 1.8f + p, 8, 8, WHITE);
             const char* bName = (b.type == BLESS_CHARITY) ? "Aura of Charity" : (b.type == BLESS_PURITY) ? "Veil of Purity" : "Spirit of Fortitude";
             DrawText3D(bName, Vector3Add(b.pos, {0, 3.0f, 0}), 15, WHITE);
+        }
+
+        // Saintly Echoes (F16)
+        for (const auto& e : saintlyEchoes) {
+            float p = e.life / 6.0f;
+            float pulse = 1.0f + 0.2f * sinf(GetTime() * 8.0f);
+            DrawCircle3D(e.pos, e.scale * pulse * p, {0,1,0}, 90.0f, Fade(GOLD, 0.3f * p));
+            DrawCircle3D(e.pos, e.scale * 0.5f * pulse * p, {0,1,0}, 90.0f, Fade(WHITE, 0.2f * p));
+        }
+
+        // Mansion Hazards Visuals
+        if (vigilCount >= 11 && vigilCount <= 15) { // Whirlpool ripples
+            for (int i=0; i<3; i++) {
+                float r = fmodf(GetTime() * 20.0f + i * 20.0f, 60.0f);
+                DrawCircle3D({0,0,0}, r, {0,1,0}, 90.0f, Fade(currentLineCol, 0.1f * (1.0f - r/60.0f)));
+            }
         }
 
         // Vices

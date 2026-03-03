@@ -136,6 +136,7 @@ struct Temptation {
     bool isTruth = false; // "Truth" is a converted temptation (player projectile)
     bool reflected = false;
     std::deque<Vector3> trail;
+    float frozenTimer = 0.0f;
 };
 
 struct LoveHeart {
@@ -144,6 +145,8 @@ struct LoveHeart {
     float floatOffset;
 };
 
+enum MoteType { MOTE_SPARK, MOTE_DOVE, MOTE_HEART };
+
 struct LightMote {
     Vector3 pos;
     Vector3 vel;
@@ -151,6 +154,7 @@ struct LightMote {
     float maxLife;
     Color color;
     float size;
+    MoteType type;
 };
 struct Guardian {
     Vector3 pos {0,0,0};
@@ -273,6 +277,14 @@ struct Vice {
 // ======================================================================
 GameState currentState = STATE_TITLE;
 int vigilCount = 1; // Wave number
+int initialViceCount = 0; // For candle progress
+
+// Biome Colors (Dynamic)
+Color currentSkyTop = {12, 12, 22, 255};
+Color currentFloorBase = {18, 18, 28, 255};
+Color currentViceCol = {35, 30, 45, 255};
+Color currentLineCol = {255, 245, 180, 50};
+
 Guardian guardian;
 std::vector<Vice> vices;
 std::vector<Temptation> temptations;
@@ -295,7 +307,7 @@ void StartVigil(bool fullReset);
 void UpdateFrame(float dt);
 void DrawFrame();
 void SpawnTemptation(Vector3 pos, Vector3 vel, Color col, bool isTruth, std::vector<Temptation>* localList = nullptr);
-void SpawnMotes(Vector3 pos, Color col, int count, float speed, std::vector<LightMote>* localList = nullptr);
+void SpawnMotes(Vector3 pos, Color col, int count, float speed, MoteType type = MOTE_SPARK, std::vector<LightMote>* localList = nullptr);
 
 // ======================================================================
 // Logic
@@ -348,10 +360,11 @@ void StartVigil(bool fullReset) {
             
             float ang = GetRandomValue(0, 360) * DEG2RAD;
             float dist = GetRandomValue(45, 80);
-            v.pos = {cosf(ang) * dist, 0, sinf(ang) * dist};
-            vices.push_back(std::move(v));
+        v.pos = {cosf(ang) * dist, 0, sinf(ang) * dist};
+        vices.push_back(std::move(v));
         }
     }
+    initialViceCount = (int)vices.size();
 }
 
 void UpdateGuardian(float dt) {
@@ -451,6 +464,7 @@ void UpdateGuardian(float dt) {
     if (IsKeyPressed(KEY_F) && guardian.fervor >= guardian.maxFervor) {
         guardian.fervor = 0;
         screenShake = 1.0f;
+        SpawnMotes(guardian.pos, WHITE, 40, 15.0f, MOTE_DOVE); // Seven Gifts (Doves)
         SpawnMotes(guardian.pos, PINK, 100, 30.0f); // Pink for Love
         for (auto& v : vices) {
             v.corruption.store(v.corruption - 500.0f);
@@ -474,29 +488,27 @@ void UpdateGuardian(float dt) {
         guardian.shieldTimer = 0.0f;
     }
     
-    // Input: The Word (E)
+    // Input: Pax (E) - Freeze Doubts
     if (IsKeyPressed(KEY_E) && guardian.spirit >= WORD_COST && guardian.wordCooldown <= 0.0f) {
         guardian.spirit -= WORD_COST;
         guardian.wordCooldown = WORD_COOLDOWN;
         
-        SpawnMotes(guardian.pos, COL_GRACE, 30, 15.0f);
-        screenShake = 0.3f;
+        SpawnMotes(guardian.pos, COL_SPIRIT, 40, 15.0f);
+        screenShake = 0.25f;
         
-        for (auto& v : vices) {
-            float dist = Vector3Distance(v.pos, guardian.pos);
-            if (dist < WORD_RADIUS) {
-                Vector3 pushDir = Vector3Normalize(Vector3Subtract(v.pos, guardian.pos));
-                // Vices also get an impulse
-                v.pos = Vector3Add(v.pos, Vector3Scale(pushDir, 8.0f)); 
-                v.stunned = true;
-                v.stunTimer = 1.5f;
+        // Freeze nearby temptations
+        for (auto& t : temptations) {
+            if (Vector3Distance(t.pos, guardian.pos) < WORD_RADIUS * 1.5f && !t.isTruth) {
+                t.frozenTimer = 3.0f;
             }
         }
         
-        for (auto& t : temptations) {
-            if (Vector3Distance(t.pos, guardian.pos) < WORD_RADIUS && !t.isTruth) {
-                t.life = 0; 
-                SpawnMotes(t.pos, WHITE, 5, 5.0f);
+        // Pacify Vices
+        for (auto& v : vices) {
+            float dist = Vector3Distance(v.pos, guardian.pos);
+            if (dist < WORD_RADIUS) {
+                v.stunned = true;
+                v.stunTimer = 2.0f;
             }
         }
     }
@@ -623,11 +635,11 @@ void UpdateVices(float dt) {
 
                             if (fabs(angleDiff) < guardian.swingArc / 2.0f) {
                                 v.corruption.store(v.corruption - 50.0f * dt * 10.0f); // Fast conversion on hit
-                                SpawnMotes(v.pos, COL_GRACE, 2, 5.0f, &threadMotes[t]);
+                                SpawnMotes(v.pos, COL_GRACE, 2, 5.0f, MOTE_SPARK, &threadMotes[t]);
                                 if (v.corruption <= 0) {
                                     v.redeemed = true;
                                     guardian.merit.fetch_add(100);
-                                    SpawnMotes(v.pos, GOLD, 50, 10.0f, &threadMotes[t]);
+                                    SpawnMotes(v.pos, GOLD, 50, 10.0f, MOTE_SPARK, &threadMotes[t]);
                                 }
                             }
                         }
@@ -723,9 +735,13 @@ void UpdateTemptations(float dt) {
         for (size_t t = 0; t < numThreads; ++t) {
             size_t start = t * chunk;
             size_t endd = std::min(start + chunk, numT);
-            futures.push_back(g_pool->enqueue([start, endd, currentDt]() {
+            futures.push_back(g_pool->enqueue([start, endd, currentDt, dt]() {
                 for (size_t i = start; i < endd; ++i) {
                     Temptation& temp = temptations[i];
+                    if (temp.frozenTimer > 0) {
+                        temp.frozenTimer -= dt;
+                        continue; // Do not move
+                    }
                     temp.pos = Vector3Add(temp.pos, Vector3Scale(temp.vel, currentDt));
                     temp.life -= currentDt;
                     temp.trail.push_front(temp.pos);
@@ -872,16 +888,18 @@ void SpawnTemptation(Vector3 pos, Vector3 vel, Color col, bool isTruth, std::vec
     }
 }
 
-void SpawnMotes(Vector3 pos, Color col, int count, float speed, std::vector<LightMote>* localList) {
+void SpawnMotes(Vector3 pos, Color col, int count, float speed, MoteType type, std::vector<LightMote>* localList) {
     for(int i=0; i<count; i++) {
         LightMote m;
         m.pos = pos;
         Vector3 dir = { (float)GetRandomValue(-10,10), (float)GetRandomValue(-10,10), (float)GetRandomValue(-10,10) };
         m.vel = Vector3Scale(Vector3Normalize(dir), speed);
         m.color = col;
-        m.life = 1.0f;
-        m.maxLife = 1.0f;
+        m.life = (type == MOTE_DOVE) ? 3.0f : 1.0f;
+        m.maxLife = m.life;
         m.size = (float)GetRandomValue(2,5) / 10.0f;
+        if (type == MOTE_DOVE) m.size *= 2.5f;
+        m.type = type;
         
         if (localList) {
             localList->push_back(m);
@@ -896,6 +914,18 @@ void UpdateFrame(float dt) {
     timeSinceStart += dt;
     screenShake = std::max(0.0f, screenShake - dt);
     
+    // Biome Color Interpolation
+    Color targetSky, targetFloor, targetVice, targetLine;
+    if (vigilCount <= 5) { // Mansion I: Humility
+        targetSky = {12, 12, 22, 255}; targetFloor = {18, 18, 28, 255}; targetVice = {35, 30, 45, 255}; targetLine = {255, 245, 180, 50};
+    } else { // Mansion II: Temptation
+        targetSky = {45, 15, 15, 255}; targetFloor = {35, 10, 10, 255}; targetVice = {60, 20, 20, 255}; targetLine = {255, 255, 255, 60};
+    }
+    currentSkyTop = ColorLerp(currentSkyTop, targetSky, 2.0f * dt);
+    currentFloorBase = ColorLerp(currentFloorBase, targetFloor, 2.0f * dt);
+    currentViceCol = ColorLerp(currentViceCol, targetVice, 2.0f * dt);
+    currentLineCol = ColorLerp(currentLineCol, targetLine, 2.0f * dt);
+
     // Camera follow
     Vector3 targetPos = guardian.pos;
     
@@ -946,7 +976,14 @@ void UpdateFrame(float dt) {
             futures.push_back(g_pool->enqueue([start, endd, dt]() {
                 for (size_t i = start; i < endd; ++i) {
                     LightMote& m = motes[i];
-                    m.pos = Vector3Add(m.pos, Vector3Scale(m.vel, dt));
+                    if (m.type == MOTE_DOVE) {
+                        // Rising and swaying behavior for Doves
+                        m.pos.y += 12.0f * dt;
+                        m.pos.x += sinf(GetTime() * 5.0f + i) * 4.0f * dt;
+                        m.pos.z += cosf(GetTime() * 5.0f + i) * 4.0f * dt;
+                    } else {
+                        m.pos = Vector3Add(m.pos, Vector3Scale(m.vel, dt));
+                    }
                     m.life -= dt;
                 }
             }));
@@ -966,19 +1003,18 @@ void UpdateFrame(float dt) {
 
 void DrawFrame() {
     BeginDrawing();
-    ClearBackground({12, 12, 22, 255}); 
+    ClearBackground(currentSkyTop); 
     
     BeginMode3D(camera);
         // Stained Glass Radiant Floor
-        DrawPlane({0,-0.1f,0}, {250, 250}, {18, 18, 28, 255});
+        DrawPlane({0,-0.1f,0}, {250, 250}, currentFloorBase);
         for (int i = 0; i < 12; i++) {
             float ang = (float)i / 12 * 2 * PI;
             Vector3 start = {cosf(ang) * 5.0f, 0, sinf(ang) * 5.0f};
             Vector3 end = {cosf(ang) * 120.0f, 0, sinf(ang) * 120.0f};
-            Color col = (i % 3 == 0) ? Fade(COL_GRACE, 0.15f) : (i % 3 == 1) ? Fade(COL_SPIRIT, 0.1f) : Fade(PURPLE, 0.08f);
-            DrawLine3D(start, end, col);
+            DrawLine3D(start, end, currentLineCol);
             for (int r = 1; r < 5; r++) {
-                DrawCircle3D({0, 0, 0}, r * 25.0f, {0, 1, 0}, 90.0f, col);
+                DrawCircle3D({0, 0, 0}, r * 25.0f, {0, 1, 0}, 90.0f, currentLineCol);
             }
         }
         
@@ -1082,7 +1118,7 @@ void DrawFrame() {
 
         // Vices
         for (const auto& v : vices) {
-            Color vCol = (v.stunned) ? GRAY : (v.type == CARDINAL_SIN) ? COL_BOSS : COL_VICE;
+            Color vCol = (v.stunned) ? GRAY : (v.type == CARDINAL_SIN) ? COL_BOSS : currentViceCol;
             if (v.redeemed) vCol = GOLD;
             
             if (v.type == CARDINAL_SIN) {
@@ -1115,14 +1151,27 @@ void DrawFrame() {
         
         // Temptations
         for (const auto& t : temptations) {
-            DrawSphere(t.pos, 0.6f, t.color);
-            if (t.isTruth) DrawSphereWires(t.pos, 0.8f, 6, 6, GOLD);
+            Color tCol = (t.frozenTimer > 0) ? LIGHTGRAY : t.color;
+            if (t.isTruth) {
+                // Radiant Orb of Truth
+                DrawSphere(t.pos, 0.8f, WHITE);
+                DrawSphere(t.pos, 1.2f, Fade(GOLD, 0.3f));
+                DrawSphereWires(t.pos, 1.0f, 6, 6, GOLD);
+            } else {
+                // Dissonant Thorn of Doubt
+                rlPushMatrix();
+                rlTranslatef(t.pos.x, t.pos.y, t.pos.z);
+                rlRotatef(GetTime() * 200.0f, 1, 1, 1);
+                DrawCube({0,0,0}, 0.4f, 1.8f, 0.4f, tCol);
+                DrawCube({0,0,0}, 1.8f, 0.4f, 0.4f, tCol);
+                rlPopMatrix();
+            }
             
             // Draw Trail
             if (t.trail.size() > 1) {
                 for (size_t i = 0; i < t.trail.size() - 1; i++) {
-                    float alpha = 0.6f * (1.0f - ((float)i / t.trail.size()));
-                    DrawLine3D(t.trail[i], t.trail[i+1], Fade(t.color, alpha));
+                    float alpha = (t.isTruth ? 0.8f : 0.4f) * (1.0f - ((float)i / t.trail.size()));
+                    DrawLine3D(t.trail[i], t.trail[i+1], Fade(tCol, alpha));
                 }
             }
         }
@@ -1182,6 +1231,23 @@ void DrawFrame() {
 
     // Merit
     DrawText(TextFormat("JOY: %d", guardian.merit.load()), SCREEN_WIDTH - 250, 20, 30, GOLD);
+    
+    // Liturgical Candle (Vigil Progress)
+    int cX = SCREEN_WIDTH - 60, cY = 150, cW = 25, cH = 300;
+    float progress = (initialViceCount > 0) ? (float)vices.size() / initialViceCount : 0.0f;
+    float currentCandleH = cH * progress;
+    
+    // Wax
+    DrawRectangle(cX, cY + (cH - currentCandleH), cW, currentCandleH, WHITE);
+    DrawRectangleLines(cX, cY, cW, cH, Fade(GOLD, 0.5f));
+    
+    // Flame
+    if (progress > 0) {
+        float flamePulse = 0.2f * sinf(GetTime() * 10.0f);
+        DrawCircle(cX + cW/2, cY + (cH - currentCandleH) - 10, 8 + flamePulse * 10, ORANGE);
+        DrawCircle(cX + cW/2, cY + (cH - currentCandleH) - 10, 4 + flamePulse * 5, YELLOW);
+    }
+    DrawText("VIGIL", cX - 60, cY + cH + 10, 20, LIGHTGRAY);
     
     // Instructions
     DrawText("WASD Move • L-Click Swing • R-Click Shield • SPACE Cross • F Canticle • R PRAY", 20, 100, 20, Fade(WHITE, 0.5f));

@@ -2,28 +2,27 @@
 
 ## 1. Technical Requirements
 *   **Engine/Framework:** C++ with Raylib (3D).
-*   **Target Platform:** macOS (Intel/Apple Silicon).
-*   **Performance:** 60 FPS minimum. Optimized trail rendering for combo steps.
+*   **Target Platform:** macOS.
+*   **Biome System:** Implement a shader-like color interpolation system for the sky, floor, and projectiles based on the current `Vigil` number.
 
 ## 2. Functional Requirements
-*   **F06: The Censer of Mercy (Combo System):**
-    *   **Combo Sequence:** Implement a 3-step state machine:
-        *   **Step 1 (Humility):** Single sweep (140 deg). Range: 10.
-        *   **Step 2 (Mercy):** Faster double swing. Range: 12.
-        *   **Step 3 (Charity):** Full 360-degree radiant burst. Range: 15.
-    *   **Combo Window:** Successive clicks within 0.3s of the previous swing's end will advance the combo.
-    *   **Reset:** If the window is missed, the combo resets to Step 1.
-*   **F07: The Sign of the Cross (Sanctuary):** 
-    *   Maintains its protective and sanctifying properties.
-*   **F08: The Father's Love (Hearts):** 
-    *   Collection restores Grace and builds Praise Fervor.
+*   **F11: The Mansion System (Biomes):**
+    *   Vigils 1-5: Theme "Humility" (Deep Blue/Gold).
+    *   Vigils 6-10: Theme "Temptation" (Ocher/Red/White).
+    *   Each theme must change `COL_VICE` and the floor's line colors.
+*   **F12: Pax (Ability):**
+    *   Replaces the old "Word" on `E`.
+    *   Logic: Applies a `frozen` flag to all `Temptations` within range. Frozen doubts do not move or deal damage for its duration.
+*   **F13: Blessing System (Relics):**
+    *   Implement a persistent `Blessing` struct.
+    *   Example: "Veil of Purity" (reduces hit stun duration).
 
 ## 3. Content Requirements
 *   **Visual Assets:**
-    *   **Unique Trails:** Different trail colors/radiance for each combo step (Gold, White, Radiant Pink).
+    *   Dynamic sky color interpolation.
+    *   Radiant burst visual for the **Pax** ability.
 *   **UI/UX:**
-    *   Combo Counter: Displays the current step (Humility, Mercy, Charity).
+    *   Display the current **Mansion** name upon level transition.
 
 ## 4. Non-Functional Requirements
-*   **Tone Compliance:** Every element must radiate joy and love.
-*   **Feel:** High "Juice"—screen shake and light flares on the 3rd combo step.
+*   **Smooth Transitions:** Environmental color changes should happen over 2-3 seconds when entering a new Mansion.

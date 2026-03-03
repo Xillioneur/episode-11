@@ -166,11 +166,11 @@ struct Guardian {
     std::deque<float> ghostAngles;
     
     // The Father: Grace & Infinite Love
-    float grace = BASE_MAX_GRACE;
+    std::atomic<float> grace {BASE_MAX_GRACE};
     float maxGrace = BASE_MAX_GRACE;
     
     // The Son: Truth & Mercy
-    float spirit = BASE_MAX_SPIRIT;
+    std::atomic<float> spirit {BASE_MAX_SPIRIT};
     float maxSpirit = BASE_MAX_SPIRIT;
     bool isSwinging = false;
     float swingTimer = 0.0f;
@@ -187,7 +187,7 @@ struct Guardian {
     float crossDuration = 0.7f;
     
     // The Holy Spirit: Praise & Joy
-    float fervor = 0.0f;
+    std::atomic<int> fervor {0};
     float maxFervor = 1000.0f;
     
     // Mechanics
@@ -214,9 +214,9 @@ struct Guardian {
         vel = {0,0,0};
         ghosts.clear();
         ghostAngles.clear();
-        grace = maxGrace;
-        spirit = maxSpirit;
-        fervor = 0.0f;
+        grace.store(BASE_MAX_GRACE);
+        spirit.store(BASE_MAX_SPIRIT);
+        fervor.store(0);
         isShielding = false;
         isSwinging = false;
         isCrossing = false;
@@ -285,6 +285,9 @@ Color currentFloorBase = {18, 18, 28, 255};
 Color currentViceCol = {35, 30, 45, 255};
 Color currentLineCol = {255, 245, 180, 50};
 
+bool debugMode = false;
+bool godMode = false;
+
 Guardian guardian;
 std::vector<Vice> vices;
 std::vector<Temptation> temptations;
@@ -336,14 +339,15 @@ void StartVigil(bool fullReset) {
     vices.clear();
     motes.clear();
     
-    // Boss Wave at 5
-    if (vigilCount == 5) {
+    // Boss Waves
+    if (vigilCount % 5 == 0) {
         Vice v;
         v.type = CARDINAL_SIN;
-        v.maxCorruption = 2500.0f;
+        // Scale HP based on Vigil
+        v.maxCorruption = 2500.0f + (vigilCount - 5) * 1500.0f;
         v.corruption.store(v.maxCorruption);
-        v.moveSpeed = 0.0f; // Static
-        v.scale = 6.0f;
+        v.moveSpeed = 0.0f; 
+        v.scale = 6.0f + (vigilCount * 0.2f);
         v.attackTimer = 2.0f;
         v.pos = {0, 0, -40};
         vices.push_back(std::move(v));
@@ -379,9 +383,12 @@ void UpdateGuardian(float dt) {
         SpawnMotes(guardian.pos, COL_SPIRIT, 50, 12.0f);
     }
 
-    // Regeneration
-    if (!guardian.isShielding && !guardian.isDashing) {
-        guardian.spirit = std::min(guardian.spirit + SPIRIT_REGEN * dt, guardian.maxSpirit);
+    // Regeneration (Atomic Spirit)
+    if (!guardian.isShielding && !guardian.isDashing && !guardian.isPraying) {
+        float s = guardian.spirit.load();
+        if (s < guardian.maxSpirit) {
+            guardian.spirit.store(std::min(s + SPIRIT_REGEN * dt, guardian.maxSpirit));
+        }
     }
 
     // Input: Aiming
@@ -398,9 +405,9 @@ void UpdateGuardian(float dt) {
         guardian.comboStep = 0;
     }
 
-    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !guardian.isSwinging && guardian.spirit >= 10.0f) {
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !guardian.isSwinging && guardian.spirit.load() >= 10.0f) {
         guardian.isSwinging = true;
-        guardian.spirit -= 10.0f;
+        guardian.spirit.store(guardian.spirit.load() - 10.0f);
         
         // Advance Combo Step
         guardian.comboStep++;
@@ -448,10 +455,10 @@ void UpdateGuardian(float dt) {
     }
 
     // Input: Sign of the Cross (Space)
-    if (IsKeyPressed(KEY_SPACE) && !guardian.isCrossing && guardian.spirit >= 40.0f) {
+    if (IsKeyPressed(KEY_SPACE) && !guardian.isCrossing && guardian.spirit.load() >= 40.0f) {
         guardian.isCrossing = true;
         guardian.crossTimer = guardian.crossDuration;
-        guardian.spirit -= 40.0f;
+        guardian.spirit.store(guardian.spirit.load() - 40.0f);
         SpawnMotes(guardian.pos, WHITE, 40, 10.0f);
     }
 
@@ -476,21 +483,21 @@ void UpdateGuardian(float dt) {
     }
 
     // Input: Shield (Right Click)
-    if (IsMouseButtonDown(MOUSE_RIGHT_BUTTON) && guardian.spirit > 0 && !guardian.isSwinging) {
+    if (IsMouseButtonDown(MOUSE_RIGHT_BUTTON) && guardian.spirit.load() > 0 && !guardian.isSwinging) {
         if (!guardian.isShielding) {
             guardian.shieldTimer = 0.0f;
         }
         guardian.isShielding = true;
         guardian.shieldTimer += dt;
-        guardian.spirit -= SPIRIT_DRAIN_SHIELD * dt;
+        guardian.spirit.store(guardian.spirit.load() - SPIRIT_DRAIN_SHIELD * dt);
     } else {
         guardian.isShielding = false;
         guardian.shieldTimer = 0.0f;
     }
     
     // Input: Pax (E) - Freeze Doubts
-    if (IsKeyPressed(KEY_E) && guardian.spirit >= WORD_COST && guardian.wordCooldown <= 0.0f) {
-        guardian.spirit -= WORD_COST;
+    if (IsKeyPressed(KEY_E) && guardian.spirit.load() >= WORD_COST && guardian.wordCooldown <= 0.0f) {
+        guardian.spirit.store(guardian.spirit.load() - WORD_COST);
         guardian.wordCooldown = WORD_COOLDOWN;
         
         SpawnMotes(guardian.pos, COL_SPIRIT, 40, 15.0f);
@@ -517,8 +524,17 @@ void UpdateGuardian(float dt) {
     if (IsKeyDown(KEY_R) && !guardian.isSwinging && !guardian.isDashing) {
         guardian.isPraying = true;
         guardian.vel = Vector3Lerp(guardian.vel, {0,0,0}, 15.0f * dt);
-        guardian.grace = std::min(guardian.grace + 15.0f * dt, guardian.maxGrace);
-        guardian.fervor = std::min(guardian.fervor + 50.0f * dt, guardian.maxFervor);
+        float g = guardian.grace.load();
+        if (g < guardian.maxGrace) guardian.grace.store(std::min(g + 15.0f * dt, guardian.maxGrace));
+        
+        // Restore fervor (int)
+        static float fervorAccumulator = 0.0f;
+        fervorAccumulator += 50.0f * dt;
+        if (fervorAccumulator >= 1.0f) {
+            int toAdd = (int)fervorAccumulator;
+            guardian.fervor.fetch_add(toAdd);
+            fervorAccumulator -= (float)toAdd;
+        }
         
         if (fmodf(GetTime(), 0.1f) < dt) {
             SpawnMotes(Vector3Add(guardian.pos, {0, 10.0f, 0}), WHITE, 2, 5.0f);
@@ -542,11 +558,11 @@ void UpdateGuardian(float dt) {
         }
         
         // Dash (Shift) - PHYSICS IMPULSE
-        if (IsKeyPressed(KEY_LEFT_SHIFT) && guardian.spirit >= DASH_COST && !guardian.isDashing && Vector3Length(accel) > 0.1f) {
+        if (IsKeyPressed(KEY_LEFT_SHIFT) && guardian.spirit.load() >= DASH_COST && !guardian.isDashing && Vector3Length(accel) > 0.1f) {
             guardian.isDashing = true;
             guardian.dashTimer = DASH_DURATION;
             guardian.dashDir = accel;
-            guardian.spirit -= DASH_COST;
+            guardian.spirit.store(guardian.spirit.load() - DASH_COST);
             guardian.vel = Vector3Add(guardian.vel, Vector3Scale(accel, DASH_IMPULSE));
         }
     }
@@ -623,6 +639,15 @@ void UpdateVices(float dt) {
                     v.stunTimer -= dt;
                     if (v.stunTimer <= 0) v.stunned = false;
                 } else {
+                    // Auto-Redemption check (Fixes debug K and edge cases)
+                    if (v.corruption <= 0 && !v.redeemed) {
+                        bool alreadyRedeemed = v.redeemed.exchange(true);
+                        if (!alreadyRedeemed) {
+                            guardian.merit.fetch_add(100);
+                            SpawnMotes(v.pos, GOLD, 50, 10.0f, MOTE_SPARK, &threadMotes[t]);
+                        }
+                    }
+
                     // Censer Swing Interaction
                     if (guardian.isSwinging) {
                         float dist = Vector3Distance(v.pos, guardian.pos);
@@ -636,11 +661,6 @@ void UpdateVices(float dt) {
                             if (fabs(angleDiff) < guardian.swingArc / 2.0f) {
                                 v.corruption.store(v.corruption - 50.0f * dt * 10.0f); // Fast conversion on hit
                                 SpawnMotes(v.pos, COL_GRACE, 2, 5.0f, MOTE_SPARK, &threadMotes[t]);
-                                if (v.corruption <= 0) {
-                                    v.redeemed = true;
-                                    guardian.merit.fetch_add(100);
-                                    SpawnMotes(v.pos, GOLD, 50, 10.0f, MOTE_SPARK, &threadMotes[t]);
-                                }
                             }
                         }
                     }
@@ -662,38 +682,60 @@ void UpdateVices(float dt) {
                     // Attack behavior
                     v.attackTimer -= dt;
                     if (v.attackTimer <= 0.0f) {
+                        Vector3 spawnPos = Vector3Add(v.pos, {0, 2.0f, 0}); // Fix: Spawn at chest height
                         // Attack logic
                         if (v.type == WHISPERER) {
-                            SpawnTemptation(v.pos, Vector3Scale(dir, 18.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                            SpawnTemptation(spawnPos, Vector3Scale(dir, 18.0f), COL_TEMPTATION, false, &threadTemps[t]);
                             v.attackTimer = 1.5f;
                         } else if (v.type == ACCUSER) {
                             // Shotgun blast
                              for(int k=-1; k<=1; k++) {
                                  Vector3 spread = Vector3RotateByAxisAngle(dir, {0,1,0}, k * 0.2f);
-                                 SpawnTemptation(v.pos, Vector3Scale(spread, 14.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                 SpawnTemptation(spawnPos, Vector3Scale(spread, 14.0f), COL_TEMPTATION, false, &threadTemps[t]);
                              }
                              v.attackTimer = 3.0f;
                         } else if (v.type == RAGER) {
                             // Charge
                             v.pos = Vector3Add(v.pos, Vector3Scale(dir, 10.0f)); 
-                            SpawnTemptation(v.pos, Vector3Scale(dir, 25.0f), MAROON, false, &threadTemps[t]);
+                            SpawnTemptation(spawnPos, Vector3Scale(dir, 25.0f), MAROON, false, &threadTemps[t]);
                             v.attackTimer = 2.0f;
                         } else if (v.type == CARDINAL_SIN) {
-                            // Phase 1: Cross Pattern
-                            float angOffset = (float)GetTime() * 0.5f;
-                            for (int k = 0; k < 4; k++) {
-                                float ang = angOffset + k * PI/2;
-                                Vector3 crossDir = {cosf(ang), 0, sinf(ang)};
-                                SpawnTemptation(v.pos, Vector3Scale(crossDir, 16.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                            if (vigilCount == 5) { // PRIDE
+                                // Phase 1: Cross Pattern
+                                float angOffset = (float)GetTime() * 0.5f;
+                                for (int k = 0; k < 4; k++) {
+                                    float ang = angOffset + k * PI/2;
+                                    Vector3 crossDir = {cosf(ang), 0, sinf(ang)};
+                                    SpawnTemptation(spawnPos, Vector3Scale(crossDir, 16.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                }
+                                v.attackTimer = 0.5f;
+                            } else if (vigilCount == 10) { // GREED (Golden Rain)
+                                for(int k=0; k<12; k++) {
+                                    float rx = (float)GetRandomValue(-60, 60);
+                                    float rz = (float)GetRandomValue(-60, 60);
+                                    // Higher spawn for "Rain" feel
+                                    Vector3 rainPos = { rx, 45.0f, rz };
+                                    Vector3 rainVel = { 0, -22.0f, 0 }; 
+                                    SpawnTemptation(rainPos, rainVel, GOLD, false, &threadTemps[t]);
+                                }
+                                v.attackTimer = 0.15f; 
+                            } else if (vigilCount == 15) { // ENVY (Closing Ring)
+                                float ringRadius = 30.0f;
+                                for(int k=0; k<12; k++) {
+                                    float ang = (float)k / 12.0f * 2 * PI;
+                                    Vector3 sPos = Vector3Add(guardian.pos, {cosf(ang)*ringRadius, 2.0f, sinf(ang)*ringRadius});
+                                    Vector3 sDir = Vector3Normalize(Vector3Subtract(guardian.pos, sPos));
+                                    SpawnTemptation(sPos, Vector3Scale(sDir, 10.0f), GREEN, false, &threadTemps[t]);
+                                }
+                                v.attackTimer = 2.5f;
+                            } else { // WRATH (Hellfire)
+                                Vector3 toP = Vector3Normalize(Vector3Subtract(guardian.pos, v.pos));
+                                for(int k=-2; k<=2; k++) {
+                                    Vector3 spread = Vector3RotateByAxisAngle(toP, {0,1,0}, k * 0.15f);
+                                    SpawnTemptation(spawnPos, Vector3Scale(spread, 28.0f), RED, false, &threadTemps[t]);
+                                }
+                                v.attackTimer = 0.15f; // Very fast
                             }
-                            
-                            // Phase 2: Rapid Doubts (Targeted)
-                            if (fmodf(GetTime(), 4.0f) > 2.0f) {
-                                Vector3 spread = Vector3RotateByAxisAngle(dir, {0,1,0}, (float)GetRandomValue(-20, 20) * 0.01f);
-                                SpawnTemptation(v.pos, Vector3Scale(spread, 22.0f), MAROON, false, &threadTemps[t]);
-                            }
-                            
-                            v.attackTimer = 0.5f;
                         }
                     }
                 }
@@ -727,146 +769,150 @@ void UpdateTemptations(float dt) {
     float currentDt = dt * timeScale;
 
     size_t numT = temptations.size();
-    if (numT > 0) {
-        unsigned int numThreads = std::thread::hardware_concurrency();
-        if (numThreads == 0) numThreads = 4;
-        size_t chunk = (numT + numThreads - 1) / numThreads;
-        std::vector<std::future<void>> futures;
-        for (size_t t = 0; t < numThreads; ++t) {
-            size_t start = t * chunk;
-            size_t endd = std::min(start + chunk, numT);
-            futures.push_back(g_pool->enqueue([start, endd, currentDt, dt]() {
-                for (size_t i = start; i < endd; ++i) {
-                    Temptation& temp = temptations[i];
-                    if (temp.frozenTimer > 0) {
-                        temp.frozenTimer -= dt;
-                        continue; // Do not move
-                    }
-                    temp.pos = Vector3Add(temp.pos, Vector3Scale(temp.vel, currentDt));
-                    temp.life -= currentDt;
-                    temp.trail.push_front(temp.pos);
-                    if (temp.trail.size() > 12) temp.trail.pop_back();
+    if (numT == 0) return;
+
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    if (numThreads == 0) numThreads = 4;
+    size_t chunk = (numT + numThreads - 1) / numThreads;
+
+    std::vector<std::vector<LightMote>> threadMotes(numThreads);
+
+    std::vector<std::future<void>> futures;
+    for (size_t t = 0; t < numThreads; ++t) {
+        size_t start = t * chunk;
+        size_t endd = std::min(start + chunk, numT);
+        if (start >= endd) continue;
+
+        futures.push_back(g_pool->enqueue([start, endd, currentDt, dt, t, &threadMotes]() {
+            for (size_t i = start; i < endd; ++i) {
+                Temptation& temp = temptations[i];
+                if (temp.frozenTimer > 0) {
+                    temp.frozenTimer -= dt;
+                    continue; 
                 }
-            }));
-        }
-        for (auto& fut : futures) fut.wait();
-    }
-    
-    // 2. Collision with Guardian (Censer Swing, Shield, or Body)
-    for (auto& t : temptations) {
-        if (t.isTruth) continue; 
-        if (t.life <= 0) continue;
-        
-        float dist = Vector3Distance(t.pos, guardian.pos);
-        
-        // Censer Swing Check
-        if (guardian.isSwinging && dist < guardian.swingRange + 2.0f) {
-            Vector3 toBullet = Vector3Subtract(t.pos, guardian.pos);
-            float angleToBullet = atan2f(toBullet.x, toBullet.z);
-            float angleDiff = fabs(angleToBullet - guardian.facingAngle);
-            while (angleDiff > PI) angleDiff -= 2*PI;
-            while (angleDiff < -PI) angleDiff += 2*PI;
-
-            if (fabs(angleDiff) < guardian.swingArc / 2.0f) {
-                // PURIFY with Censer
-                t.vel = Vector3Scale(Vector3Normalize(Vector3Negate(t.vel)), Vector3Length(t.vel) * 2.0f);
-                t.isTruth = true;
-                t.color = COL_TRUTH;
-                t.life = 6.0f;
-                SpawnMotes(t.pos, COL_GRACE, 12, 12.0f);
-                guardian.merit.fetch_add(5); 
-                guardian.fervor = std::min(guardian.fervor + 10.0f, guardian.maxFervor); // Build fervor
-                continue;
-            }
-        }
-
-        // Sign of the Cross Check
-        if (guardian.isCrossing && dist < 12.0f) {
-            // Check if bullet is within the vertical or horizontal beams of the cross
-            Vector3 local = Vector3Subtract(t.pos, guardian.pos);
-            if (fabs(local.x) < 2.0f || fabs(local.z) < 2.0f) {
-                t.isTruth = true;
-                t.color = COL_TRUTH;
-                t.vel = Vector3Scale(Vector3Normalize(Vector3Negate(t.vel)), Vector3Length(t.vel) * 1.5f);
-                t.life = 7.0f;
-                SpawnMotes(t.pos, WHITE, 5, 8.0f);
-                continue;
-            }
-        }
-
-        if (dist < 3.0f) {
-            // Check Shield
-            Vector3 toBullet = Vector3Subtract(t.pos, guardian.pos);
-            float angleToBullet = atan2f(toBullet.x, toBullet.z);
-            float angleDiff = fabs(angleToBullet - guardian.facingAngle);
-            while (angleDiff > PI) angleDiff -= 2*PI;
-            while (angleDiff < -PI) angleDiff += 2*PI;
-            
-            bool blocked = guardian.isShielding && (fabs(angleDiff) < SHIELD_ARC / 2.0f);
-            
-            if (blocked) {
-                // REFLECT / BLOCK
-                bool perfect = guardian.shieldTimer < PARRY_WINDOW;
                 
-                t.vel = Vector3Scale(Vector3Normalize(Vector3Negate(t.vel)), Vector3Length(t.vel) * 1.5f);
-                t.isTruth = true; // Convert to Truth
-                t.color = COL_TRUTH;
-                t.life = 5.0f;
-                
-                SpawnMotes(t.pos, COL_GRACE, 10, 10.0f);
-                
-                if (perfect) {
-                    guardian.spirit = std::min(guardian.spirit + 15.0f, guardian.maxSpirit); // Restore spirit
-                    screenShake = 0.2f;
-                    // Play chime sound here
+                // 1. Movement
+                temp.pos = Vector3Add(temp.pos, Vector3Scale(temp.vel, currentDt));
+                temp.life -= currentDt;
+                temp.trail.push_front(temp.pos);
+                if (temp.trail.size() > 12) temp.trail.pop_back();
+
+                // Ground Collision (Splash)
+                if (temp.pos.y <= 0.0f) {
+                    temp.life = 0;
+                    SpawnMotes(temp.pos, (temp.isTruth ? WHITE : temp.color), 4, 5.0f, MOTE_SPARK, &threadMotes[t]);
+                    continue;
+                }
+
+                if (temp.isTruth) {
+                    // Collision with Vices (Redemption)
+                    if (temp.life <= 0) continue;
+                    for (auto& v : vices) {
+                        if (v.redeemed) continue;
+                        if (Vector3Distance(temp.pos, v.pos) < v.scale * 2.0f) {
+                            v.corruption.store(v.corruption - 35.0f); 
+                            temp.life = 0; 
+                            SpawnMotes(temp.pos, COL_SPIRIT, 15, 8.0f, MOTE_SPARK, &threadMotes[t]);
+                            
+                            if (v.corruption <= 0) {
+                                bool alreadyRedeemed = v.redeemed.exchange(true);
+                                if (!alreadyRedeemed) {
+                                    guardian.merit.fetch_add(100);
+                                    SpawnMotes(v.pos, GOLD, 50, 10.0f, MOTE_SPARK, &threadMotes[t]);
+                                    
+                                    if (GetRandomValue(0, 100) < 35) {
+                                        LoveHeart h;
+                                        h.pos = v.pos; h.pos.y = 2.0f;
+                                        h.life = 10.0f;
+                                        h.floatOffset = (float)GetRandomValue(0, 100);
+                                        std::lock_guard<std::mutex> lock(sharedMutex);
+                                        loveHearts.push_back(h);
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
                 } else {
-                    guardian.spirit -= 10.0f; // Chip stamina on block
-                    if (guardian.spirit < 0) guardian.isShielding = false; // Guard break
-                }
-            } else if (guardian.hitStun <= 0.0f && !guardian.isDashing) {
-                // HIT
-                guardian.grace -= 15.0f;
-                guardian.hitStun = 1.0f;
-                screenShake = 0.5f;
-                hitStop = 0.1f;
-                t.life = 0;
-                SpawnMotes(guardian.pos, RED, 20, 15.0f);
-            }
-        }
-    }
-    
-    // 3. Collision with Vices (Redemption)
-    for (auto& t : temptations) {
-        if (!t.isTruth) continue;
-        if (t.life <= 0) continue;
-        
-        for (auto& v : vices) {
-            if (v.redeemed) continue;
-            if (Vector3Distance(t.pos, v.pos) < v.scale * 2.0f) {
-                v.corruption.store(v.corruption - 35.0f); // Damage
-                t.life = 0; // Destroy projectile
-                SpawnMotes(t.pos, COL_SPIRIT, 15, 8.0f);
-                
-                if (v.corruption <= 0) {
-                    v.redeemed = true;
-                    guardian.merit.fetch_add(100);
-                    SpawnMotes(v.pos, GOLD, 50, 10.0f);
+                    // Collision with Guardian (Censer, Shield, or Body)
+                    if (temp.life <= 0) continue;
+                    float dist = Vector3Distance(temp.pos, guardian.pos);
                     
-                    // Divine Love: 35% chance to drop a Heart
-                    if (GetRandomValue(0, 100) < 35) {
-                        LoveHeart h;
-                        h.pos = v.pos; h.pos.y = 2.0f;
-                        h.life = 10.0f;
-                        h.floatOffset = (float)GetRandomValue(0, 100);
-                        std::lock_guard<std::mutex> lock(sharedMutex);
-                        loveHearts.push_back(h);
+                    // Censer Swing Check
+                    if (guardian.isSwinging && dist < guardian.swingRange + 2.0f) {
+                        Vector3 toBullet = Vector3Subtract(temp.pos, guardian.pos);
+                        float angleToBullet = atan2f(toBullet.x, toBullet.z);
+                        float angleDiff = fabs(angleToBullet - guardian.facingAngle);
+                        while (angleDiff > PI) angleDiff -= 2*PI;
+                        while (angleDiff < -PI) angleDiff += 2*PI;
+
+                        if (fabs(angleDiff) < guardian.swingArc / 2.0f) {
+                            temp.vel = Vector3Scale(Vector3Normalize(Vector3Negate(temp.vel)), Vector3Length(temp.vel) * 2.0f);
+                            temp.isTruth = true;
+                            temp.color = COL_TRUTH;
+                            temp.life = 6.0f;
+                            SpawnMotes(temp.pos, COL_GRACE, 12, 12.0f, MOTE_SPARK, &threadMotes[t]);
+                            guardian.merit.fetch_add(5); 
+                            guardian.fervor.fetch_add(10); 
+                            continue;
+                        }
+                    }
+
+                    // Sign of the Cross Check
+                    if (guardian.isCrossing && dist < 12.0f) {
+                        Vector3 local = Vector3Subtract(temp.pos, guardian.pos);
+                        if (fabs(local.x) < 2.0f || fabs(local.z) < 2.0f) {
+                            temp.isTruth = true;
+                            temp.color = COL_TRUTH;
+                            temp.vel = Vector3Scale(Vector3Normalize(Vector3Negate(temp.vel)), Vector3Length(temp.vel) * 1.5f);
+                            temp.life = 7.0f;
+                            SpawnMotes(temp.pos, WHITE, 5, 8.0f, MOTE_SPARK, &threadMotes[t]);
+                            continue;
+                        }
+                    }
+
+                    if (dist < 3.0f) {
+                        Vector3 toBullet = Vector3Subtract(temp.pos, guardian.pos);
+                        float angleToBullet = atan2f(toBullet.x, toBullet.z);
+                        float angleDiff = fabs(angleToBullet - guardian.facingAngle);
+                        while (angleDiff > PI) angleDiff -= 2*PI;
+                        while (angleDiff < -PI) angleDiff += 2*PI;
+                        
+                        bool blocked = guardian.isShielding && (fabs(angleDiff) < SHIELD_ARC / 2.0f);
+                        
+                        if (blocked) {
+                            bool perfect = guardian.shieldTimer < PARRY_WINDOW;
+                            temp.vel = Vector3Scale(Vector3Normalize(Vector3Negate(temp.vel)), Vector3Length(temp.vel) * 1.5f);
+                            temp.isTruth = true;
+                            temp.color = COL_TRUTH;
+                            temp.life = 5.0f;
+                            SpawnMotes(temp.pos, COL_GRACE, 10, 10.0f, MOTE_SPARK, &threadMotes[t]);
+                            if (perfect) {
+                                guardian.fervor.fetch_add(5);
+                            }
+                        } else if (guardian.hitStun <= 0.0f && !guardian.isDashing) {
+                            // HIT handled on main thread or via atomic
+                            temp.life = 0;
+                            if (!godMode) {
+                                float currentG = guardian.grace.load();
+                                while (!guardian.grace.compare_exchange_weak(currentG, currentG - 15.0f));
+                            }
+                        }
                     }
                 }
             }
+        }));
+    }
+    for (auto& fut : futures) fut.wait();
+
+    // Merge motes
+    for (int t = 0; t < numThreads; t++) {
+        if (!threadMotes[t].empty()) {
+            motes.insert(motes.end(), threadMotes[t].begin(), threadMotes[t].end());
         }
     }
-    
-    // Cleanup
+
+    // Cleanup (Sequential)
     temptations.erase(std::remove_if(temptations.begin(), temptations.end(), 
         [](const Temptation& t){ return t.life <= 0; }), temptations.end());
 }
@@ -874,12 +920,11 @@ void UpdateTemptations(float dt) {
 void SpawnTemptation(Vector3 pos, Vector3 vel, Color col, bool isTruth, std::vector<Temptation>* localList) {
     Temptation t;
     t.pos = pos;
-    t.pos.y = 2.0f;
     t.vel = vel;
     t.color = col;
     t.life = 5.0f;
     t.isTruth = isTruth;
-    
+    t.frozenTimer = 0.0f;
     if (localList) {
         localList->push_back(t);
     } else {
@@ -914,13 +959,31 @@ void UpdateFrame(float dt) {
     timeSinceStart += dt;
     screenShake = std::max(0.0f, screenShake - dt);
     
+    // Debug Controls
+    if (IsKeyPressed(KEY_TAB)) debugMode = !debugMode;
+    if (debugMode) {
+        if (IsKeyPressed(KEY_F1)) { vigilCount = 1; StartVigil(false); }
+        if (IsKeyPressed(KEY_F2)) { vigilCount = 10; StartVigil(false); }
+        if (IsKeyPressed(KEY_F3)) { vigilCount = 15; StartVigil(false); }
+        if (IsKeyPressed(KEY_F4)) { vigilCount = 20; StartVigil(false); }
+        if (IsKeyPressed(KEY_G)) godMode = !godMode;
+        if (IsKeyPressed(KEY_M)) guardian.merit.fetch_add(1000);
+        if (IsKeyPressed(KEY_P)) guardian.fervor.store(1000);
+        if (IsKeyPressed(KEY_K)) { for(auto& v : vices) v.corruption = 0; }
+    }
+
     // Biome Color Interpolation
     Color targetSky, targetFloor, targetVice, targetLine;
-    if (vigilCount <= 5) { // Mansion I: Humility
+    if (vigilCount <= 5) { // Mansion I: Humility (Night/Garden)
         targetSky = {12, 12, 22, 255}; targetFloor = {18, 18, 28, 255}; targetVice = {35, 30, 45, 255}; targetLine = {255, 245, 180, 50};
-    } else { // Mansion II: Temptation
+    } else if (vigilCount <= 10) { // Mansion II: Temptation (Desert)
         targetSky = {45, 15, 15, 255}; targetFloor = {35, 10, 10, 255}; targetVice = {60, 20, 20, 255}; targetLine = {255, 255, 255, 60};
+    } else if (vigilCount <= 15) { // Mansion III: Sea of Peace (Ocean)
+        targetSky = {0, 20, 40, 255}; targetFloor = {0, 10, 25, 255}; targetVice = {0, 40, 40, 255}; targetLine = {0, 200, 255, 80};
+    } else { // Mansion IV: Inner Sanctum (Heaven)
+        targetSky = {200, 200, 220, 255}; targetFloor = {220, 220, 240, 255}; targetVice = {80, 80, 80, 255}; targetLine = {255, 215, 0, 100};
     }
+    
     currentSkyTop = ColorLerp(currentSkyTop, targetSky, 2.0f * dt);
     currentFloorBase = ColorLerp(currentFloorBase, targetFloor, 2.0f * dt);
     currentViceCol = ColorLerp(currentViceCol, targetVice, 2.0f * dt);
@@ -1196,7 +1259,7 @@ void DrawFrame() {
     DrawText(TextFormat("VIGIL %d", vigilCount), 20, 60, 30, WHITE);
     
     // The Sacred Heart (Grace/Love)
-    float pulseSpeed = 1.0f + (1.0f - (guardian.grace / guardian.maxGrace)) * 4.0f;
+    float pulseSpeed = 1.0f + (1.0f - ((float)guardian.grace.load() / guardian.maxGrace)) * 4.0f;
     float heartScale = 1.0f + 0.15f * sinf(GetTime() * pulseSpeed * PI * 2.0f);
     int hX = 80, hY = SCREEN_HEIGHT - 80;
     
@@ -1215,16 +1278,16 @@ void DrawFrame() {
 
     // Love Bar (Background for Heart)
     DrawRectangle(140, SCREEN_HEIGHT - 65, 200, 20, Fade(BLACK, 0.5f));
-    DrawRectangle(140, SCREEN_HEIGHT - 65, 200 * (guardian.grace / guardian.maxGrace), 20, PINK);
+    DrawRectangle(140, SCREEN_HEIGHT - 65, 200 * ((float)guardian.grace.load() / guardian.maxGrace), 20, PINK);
     DrawText("LOVE", 150, SCREEN_HEIGHT - 63, 16, BLACK);
     
     // The Son (Mercy)
     DrawRectangle(140, SCREEN_HEIGHT - 90, 180, 15, Fade(BLACK, 0.5f));
-    DrawRectangle(140, SCREEN_HEIGHT - 90, 180 * (guardian.spirit / guardian.maxSpirit), 15, COL_SPIRIT);
+    DrawRectangle(140, SCREEN_HEIGHT - 90, 180 * ((float)guardian.spirit.load() / guardian.maxSpirit), 15, COL_SPIRIT);
     DrawText("MERCY", 150, SCREEN_HEIGHT - 90, 12, BLACK);
 
     // The Holy Spirit (Praise)
-    float fervorPct = guardian.fervor / guardian.maxFervor;
+    float fervorPct = (float)guardian.fervor.load() / guardian.maxFervor;
     DrawRectangle(140, SCREEN_HEIGHT - 110, 160, 10, Fade(BLACK, 0.5f));
     DrawRectangle(140, SCREEN_HEIGHT - 110, 160 * fervorPct, 10, GOLD);
     if (fervorPct >= 1.0f) DrawText("PRESS F - CANTICLE OF JOY", 140, SCREEN_HEIGHT - 140, 20, GOLD);
@@ -1248,6 +1311,20 @@ void DrawFrame() {
         DrawCircle(cX + cW/2, cY + (cH - currentCandleH) - 10, 4 + flamePulse * 5, YELLOW);
     }
     DrawText("VIGIL", cX - 60, cY + cH + 10, 20, LIGHTGRAY);
+    
+    // Debug Overlay
+    if (debugMode) {
+        DrawRectangle(SCREEN_WIDTH - 320, 100, 300, 240, Fade(BLACK, 0.7f));
+        DrawText("--- GUARDIAN DEBUG ---", SCREEN_WIDTH - 300, 110, 20, GOLD);
+        DrawText(TextFormat("God Mode: %s", godMode ? "ON" : "OFF"), SCREEN_WIDTH - 300, 140, 18, godMode ? GREEN : GRAY);
+        DrawText(TextFormat("Current Vigil: %d", vigilCount), SCREEN_WIDTH - 300, 160, 18, WHITE);
+        DrawText(TextFormat("FPS: %d", GetFPS()), SCREEN_WIDTH - 300, 180, 18, LIME);
+        
+        DrawText("F1-F4: Jump Vigils", SCREEN_WIDTH - 300, 210, 16, LIGHTGRAY);
+        DrawText("G: God Mode | K: Redeem All", SCREEN_WIDTH - 300, 230, 16, LIGHTGRAY);
+        DrawText("M: +1000 Joy | P: Max Praise", SCREEN_WIDTH - 300, 250, 16, LIGHTGRAY);
+        DrawText("TAB: Close Debug", SCREEN_WIDTH - 300, 280, 16, GOLD);
+    }
     
     // Instructions
     DrawText("WASD Move • L-Click Swing • R-Click Shield • SPACE Cross • F Canticle • R PRAY", 20, 100, 20, Fade(WHITE, 0.5f));
@@ -1314,7 +1391,7 @@ int main() {
             if (IsKeyPressed(KEY_TWO) && guardian.merit >= 200) {
                 guardian.merit -= 200;
                 guardian.maxGrace += 20;
-                guardian.grace += 20;
+                guardian.grace.store(guardian.grace.load() + 20.0f);
             }
             if (IsKeyPressed(KEY_THREE) && guardian.merit >= 300) {
                 guardian.merit -= 300;

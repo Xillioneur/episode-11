@@ -124,6 +124,106 @@ private:
 };
 
 // ======================================================================
+// Shaders & Graphics
+// ======================================================================
+const char* vsCode = R"(
+    #version 330
+    in vec3 vertexPosition;
+    in vec2 vertexTexCoord;
+    in vec3 vertexNormal;
+    uniform mat4 mvp;
+    uniform mat4 matModel;
+    uniform mat4 matNormal;
+    out vec3 fragPosition;
+    out vec2 fragTexCoord;
+    out vec3 fragNormal;
+    void main() {
+        fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
+        fragTexCoord = vertexTexCoord;
+        fragNormal = normalize(vec3(matNormal * vec4(vertexNormal, 1.0)));
+        gl_Position = mvp * vec4(vertexPosition, 1.0);
+    }
+)";
+
+const char* fsCode = R"(
+    #version 330
+    in vec3 fragPosition;
+    in vec2 fragTexCoord;
+    in vec3 fragNormal;
+    uniform vec4 colDiffuse;
+    uniform vec3 viewPos;
+    uniform vec3 lightPos;
+    uniform vec4 lightColor;
+    uniform float rimPower;
+    out vec4 finalColor;
+    
+    // Simple hash for noise
+    float hash(vec2 p) { return fract(1e4 * sin(17.0 * p.x + p.y * 0.1) * (0.1 + abs(sin(p.y * 13.0 + p.x)))); }
+    
+    void main() {
+        // Base
+        vec3 normal = normalize(fragNormal);
+        vec3 viewDir = normalize(viewPos - fragPosition);
+        
+        // Procedural Detail (Micro-Surface)
+        float noise = hash(fragPosition.xy * 10.0 + fragPosition.zz * 5.0);
+        vec3 surfaceCol = colDiffuse.rgb * (0.9 + 0.1 * noise); // Subtle grain
+        
+        // Lighting
+        vec3 lightDir = normalize(lightPos - fragPosition);
+        float diff = max(dot(normal, lightDir), 0.0);
+        vec3 diffuse = diff * lightColor.rgb;
+        
+        // Specular (Blinn-Phong)
+        vec3 halfDir = normalize(lightDir + viewDir);
+        float spec = pow(max(dot(normal, halfDir), 0.0), 32.0);
+        vec3 specular = vec3(1.0) * spec * 0.5;
+        
+        // Rim Light (Divine Glow)
+        float rim = 1.0 - max(dot(viewDir, normal), 0.0);
+        rim = pow(rim, rimPower);
+        vec3 rimColor = vec3(1.0, 0.9, 0.6) * rim * 1.5;
+        
+        // Combine
+        vec3 result = (0.2 + diffuse) * surfaceCol + specular + rimColor;
+        finalColor = vec4(result, colDiffuse.a);
+    }
+)";
+
+const char* fsPost = R"(
+    #version 330
+    in vec2 fragTexCoord;
+    in vec4 fragColor;
+    uniform sampler2D texture0;
+    out vec4 finalColor;
+    void main() {
+        vec3 color = texture(texture0, fragTexCoord).rgb;
+        
+        // Tone Mapping (Reinhard)
+        color = color / (color + vec3(1.0));
+        
+        // Gamma Correction
+        color = pow(color, vec3(1.0/2.2));
+        
+        // Vignette
+        vec2 uv = fragTexCoord * (1.0 - fragTexCoord.yx);
+        float vig = uv.x*uv.y * 15.0;
+        vig = pow(vig, 0.2);
+        color *= vig;
+        
+        finalColor = vec4(color, 1.0);
+    }
+)";
+
+// Graphics Resources
+Mesh sphereMesh;
+Mesh cylinderMesh;
+Mesh cubeMesh;
+Material divineMat;
+Shader postShader;
+RenderTexture2D target;
+
+// ======================================================================
 // Enums & Structs
 // ======================================================================
 enum GameState { STATE_TITLE, STATE_VIGIL, STATE_ALTAR, STATE_DESOLATION, STATE_PAUSE, STATE_VICTORY };
@@ -409,6 +509,23 @@ void InitLumenFidei() {
     camera.up = {0,1,0};
     camera.position = {0, CAMERA_HEIGHT, CAMERA_DISTANCE};
     camera.target = {0, 0, 0};
+    
+    // Graphics Init
+    sphereMesh = GenMeshSphere(1.0f, 32, 32); // Smoother
+    cylinderMesh = GenMeshCylinder(1.0f, 1.0f, 32); // Smoother
+    cubeMesh = GenMeshCube(1.0f, 1.0f, 1.0f);
+    
+    Shader sh = LoadShaderFromMemory(vsCode, fsCode);
+    divineMat = LoadMaterialDefault();
+    divineMat.shader = sh;
+    
+    // Set shader uniforms (defaults)
+    int rimLoc = GetShaderLocation(sh, "rimPower");
+    float rimP = 3.0f;
+    SetShaderValue(sh, rimLoc, &rimP, SHADER_UNIFORM_FLOAT);
+    
+    postShader = LoadShaderFromMemory(0, fsPost);
+    target = LoadRenderTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
     
     StartVigil(true);
 }
@@ -1493,8 +1610,23 @@ void UpdateFrame(float dt) {
     }
 }
 
+void DrawDivineMesh(Mesh mesh, Vector3 pos, Vector3 scale, Color col) {
+    Matrix mat = MatrixIdentity();
+    mat = MatrixMultiply(mat, MatrixScale(scale.x, scale.y, scale.z));
+    mat = MatrixMultiply(mat, MatrixTranslate(pos.x, pos.y, pos.z));
+    divineMat.maps[MATERIAL_MAP_DIFFUSE].color = col;
+    DrawMesh(mesh, divineMat, mat);
+}
+
 void DrawFrame() {
-    BeginDrawing();
+    // Update Shader Uniforms
+    SetShaderValue(divineMat.shader, GetShaderLocation(divineMat.shader, "viewPos"), &camera.position, SHADER_UNIFORM_VEC3);
+    Vector3 lightPos = {0, 50, 0};
+    SetShaderValue(divineMat.shader, GetShaderLocation(divineMat.shader, "lightPos"), &lightPos, SHADER_UNIFORM_VEC3);
+    float lightCol[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    SetShaderValue(divineMat.shader, GetShaderLocation(divineMat.shader, "lightColor"), lightCol, SHADER_UNIFORM_VEC4);
+
+    BeginTextureMode(target);
     ClearBackground(currentSkyTop); 
     
     BeginMode3D(camera);
@@ -1553,16 +1685,18 @@ void DrawFrame() {
         rlPushMatrix();
         rlTranslatef(guardian.pos.x, 0, guardian.pos.z);
         rlRotatef(guardian.facingAngle * RAD2DEG, 0, 1, 0);
-        // Apply Physics Leaning (Relative to facing)
+        // Apply Physics Leaning
         rlRotatef(guardian.tiltZ * RAD2DEG, 0, 0, 1);
         rlRotatef(guardian.tiltX * RAD2DEG, 1, 0, 0);
         
         // Body
-        DrawCylinder({0,0,0}, 1.0f, 1.0f, 3.2f, 8, COL_GRACE);
+        DrawDivineMesh(cylinderMesh, {0, 1.6f, 0}, {1.0f, 1.6f, 1.0f}, COL_GRACE);
+        
         // Shoulders
         rlPushMatrix();
         rlTranslatef(0, 3.0f, 0);
-        DrawCylinderEx({-1.5f, 0, 0}, {1.5f, 0, 0}, 0.4f, 0.4f, 8, COL_GRACE);
+        rlRotatef(90, 0, 0, 1);
+        DrawDivineMesh(cylinderMesh, {0,0,0}, {0.4f, 1.5f, 0.4f}, COL_GRACE);
         rlPopMatrix();
         
         // Cape (Flowing behind)
@@ -1574,7 +1708,7 @@ void DrawFrame() {
         rlPopMatrix();
 
         // Head/Halo
-        DrawSphere({0,3.5f,0}, 1.1f, COL_GRACE);
+        DrawDivineMesh(sphereMesh, {0,3.5f,0}, {1.1f, 1.1f, 1.1f}, COL_GRACE);
         DrawSphere({0,3.5f,0}, 1.8f * guardian.haloScale, Fade(COL_GRACE, 0.15f)); 
         rlPopMatrix();
         
@@ -1666,7 +1800,6 @@ void DrawFrame() {
             Vector3 drawPos = v.pos;
             if (v.type == CARDINAL_SIN) {
                 if (v.state == VICE_TELEGRAPH) {
-                    // Shake and Flash
                     drawPos.x += (float)GetRandomValue(-10, 10) * 0.05f;
                     drawPos.z += (float)GetRandomValue(-10, 10) * 0.05f;
                     vCol = ColorLerp(vCol, RED, 0.5f + 0.5f * sinf(GetTime() * 20.0f));
@@ -1675,7 +1808,7 @@ void DrawFrame() {
                 }
 
                 // Boss Visual
-                DrawSphere(drawPos, v.scale * 1.5f, vCol);
+                DrawDivineMesh(sphereMesh, drawPos, {v.scale * 1.5f, v.scale * 1.5f, v.scale * 1.5f}, vCol);
                 DrawSphere(drawPos, v.scale * 2.2f, Fade(vCol, 0.15f)); 
                 // Crown
                 for (int i=0; i<8; i++) {
@@ -1684,7 +1817,7 @@ void DrawFrame() {
                     DrawLine3D(drawPos, Vector3Add(drawPos, spike), GOLD);
                 }
             } else {
-                DrawSphere(v.pos, v.scale * 1.5f, vCol);
+                DrawDivineMesh(sphereMesh, v.pos, {v.scale * 1.5f, v.scale * 1.5f, v.scale * 1.5f}, vCol);
             }
             
             // Redemption Bar
@@ -1705,8 +1838,8 @@ void DrawFrame() {
         for (const auto& t : temptations) {
             Color tCol = (t.frozenTimer > 0) ? LIGHTGRAY : t.color;
             if (t.isTruth) {
-                // Radiant Orb of Truth
-                DrawSphere(t.pos, 0.8f, WHITE);
+                // Radiant Orb of Truth (Lit)
+                DrawDivineMesh(sphereMesh, t.pos, {0.8f, 0.8f, 0.8f}, WHITE);
                 DrawSphere(t.pos, 1.2f, Fade(GOLD, 0.3f));
                 DrawSphereWires(t.pos, 1.0f, 6, 6, GOLD);
             } else {
@@ -1728,9 +1861,17 @@ void DrawFrame() {
             }
         }
         
-        // Motes
+        // Motes (Batching Candidate - Keep simple for now but cull)
         for (const auto& m : motes) {
-            DrawCube(m.pos, m.size, m.size, m.size, Fade(m.color, m.life));
+            if (m.size < 0.05f) continue; // Culling
+            Color mCol = Fade(m.color, m.life);
+            if (m.type == MOTE_DOVE) {
+                // Simple Dove Shape
+                DrawCube(m.pos, m.size, m.size*0.2f, m.size*0.5f, mCol);
+                DrawCube(Vector3Add(m.pos, {0,0,m.size*0.3f}), m.size*0.2f, m.size*0.2f, m.size*0.8f, mCol); // Wings
+            } else {
+                DrawCube(m.pos, m.size, m.size, m.size, mCol);
+            }
         }
         
         // Cursor
@@ -1742,8 +1883,16 @@ void DrawFrame() {
         DrawCircle3D(aimPos, 0.6f, {1, 0, 0}, 90.0f, Fade(WHITE, 0.3f));
 
     EndMode3D();
+    EndTextureMode();
     
-    // UI
+    // Post-Process Pass
+    BeginDrawing();
+    ClearBackground(BLACK);
+    BeginShaderMode(postShader);
+    DrawTextureRec(target.texture, {0, 0, (float)target.texture.width, (float)-target.texture.height}, {0,0}, WHITE);
+    EndShaderMode();
+    
+    // UI (On top of post-process)
     DrawText("LUMEN FIDEI", 20, 20, 40, COL_GRACE);
     DrawText(TextFormat("VIGIL %d", vigilCount), 20, 60, 30, WHITE);
     

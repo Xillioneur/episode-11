@@ -126,7 +126,7 @@ private:
 // ======================================================================
 // Enums & Structs
 // ======================================================================
-enum GameState { STATE_TITLE, STATE_VIGIL, STATE_ALTAR, STATE_DESOLATION, STATE_ASCENSION };
+enum GameState { STATE_TITLE, STATE_VIGIL, STATE_ALTAR, STATE_DESOLATION, STATE_PAUSE, STATE_VICTORY };
 enum ViceType { WHISPERER, ACCUSER, RAGER, CARDINAL_SIN };
 
 struct Temptation {
@@ -1485,7 +1485,11 @@ void UpdateFrame(float dt) {
     if (guardian.grace.load() <= 0) currentState = STATE_DESOLATION;
     if (vices.empty()) {
         vigilCount++;
-        StartVigil(false);
+        if (vigilCount > 25) {
+            currentState = STATE_VICTORY;
+        } else {
+            StartVigil(false);
+        }
     }
 }
 
@@ -1875,7 +1879,37 @@ void DrawFrame() {
         DrawText(stepName, SCREEN_WIDTH/2 - MeasureText(stepName, 50)/2, SCREEN_HEIGHT - 180, 50, Fade(comboCol, 0.8f));
     }
     
-    if (currentState == STATE_DESOLATION) {
+    // Game State Overlays
+    if (currentState == STATE_TITLE) {
+        DrawRectangle(0,0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.6f));
+        DrawText("LUMEN FIDEI", SCREEN_WIDTH/2 - MeasureText("LUMEN FIDEI", 80)/2, SCREEN_HEIGHT/2 - 80, 80, GOLD);
+        DrawText("The Joy of the Trinity", SCREEN_WIDTH/2 - MeasureText("The Joy of the Trinity", 30)/2, SCREEN_HEIGHT/2 + 10, 30, WHITE);
+        
+        float pulse = 0.5f + 0.5f * sinf(GetTime() * 4.0f);
+        DrawText("PRESS ENTER TO BEGIN", SCREEN_WIDTH/2 - MeasureText("PRESS ENTER TO BEGIN", 20)/2, SCREEN_HEIGHT - 100, 20, Fade(WHITE, pulse));
+    }
+    else if (currentState == STATE_PAUSE) {
+        DrawRectangle(0,0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.4f));
+        DrawText("- PAUSED -", SCREEN_WIDTH/2 - MeasureText("- PAUSED -", 40)/2, SCREEN_HEIGHT/2 - 20, 40, WHITE);
+        
+        // Show Controls in Pause
+        int cX = SCREEN_WIDTH/2 - 150, cY = SCREEN_HEIGHT/2 + 40;
+        DrawText("Controls:", cX, cY, 20, GOLD);
+        DrawText("WASD: Move (Drift)", cX, cY + 30, 18, LIGHTGRAY);
+        DrawText("L-Click: Censer Swing", cX, cY + 55, 18, LIGHTGRAY);
+        DrawText("R-Click: Shield of Faith", cX, cY + 80, 18, LIGHTGRAY);
+        DrawText("Space: Sign of the Cross", cX, cY + 105, 18, LIGHTGRAY);
+        DrawText("E: Pax (Freeze Time)", cX, cY + 130, 18, LIGHTGRAY);
+        DrawText("F: Canticle of Joy", cX, cY + 155, 18, LIGHTGRAY);
+        DrawText("R (Hold): Prayer", cX, cY + 180, 18, LIGHTGRAY);
+    }
+    else if (currentState == STATE_VICTORY) {
+        DrawRectangle(0,0, SCREEN_WIDTH, SCREEN_HEIGHT, WHITE);
+        DrawText("ASCENSION ACHIEVED", SCREEN_WIDTH/2 - MeasureText("ASCENSION ACHIEVED", 60)/2, SCREEN_HEIGHT/2 - 60, 60, GOLD);
+        DrawText(TextFormat("Final Joy: %d", guardian.merit.load()), SCREEN_WIDTH/2 - 100, SCREEN_HEIGHT/2 + 20, 30, BLACK);
+        DrawText("Thank you for playing.", SCREEN_WIDTH/2 - MeasureText("Thank you for playing.", 20)/2, SCREEN_HEIGHT - 100, 20, GRAY);
+    }
+    else if (currentState == STATE_DESOLATION) {
         DrawRectangle(0,0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(BLACK, 0.8f));
         DrawText("DESOLATION", SCREEN_WIDTH/2 - MeasureText("DESOLATION", 60)/2, SCREEN_HEIGHT/2 - 50, 60, RED);
         DrawText("The light has faded...", SCREEN_WIDTH/2 - MeasureText("The light has faded...", 30)/2, SCREEN_HEIGHT/2 + 20, 30, GRAY);
@@ -1889,8 +1923,9 @@ void DrawFrame() {
 // Main
 // ======================================================================
 int main() {
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Lumen Fidei – The Shield of Saints");
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "LumenFidei – The Shield of Saints");
     SetTargetFPS(60);
+    SetExitKey(0); // Disable default ESC key closing the game
     // HideCursor(); // Use custom cursor
     
     InitLumenFidei();
@@ -1901,16 +1936,40 @@ int main() {
 
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
+        
+        // Hit Stop Logic (Juice)
         if (hitStop > 0) {
             hitStop -= dt;
-            dt = 0;
+            // Draw frozen frame
+            DrawFrame();
+            continue;
         }
 
-        if (currentState == STATE_DESOLATION) {
+        // Global State Management
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            if (currentState == STATE_VIGIL) currentState = STATE_PAUSE;
+            else if (currentState == STATE_PAUSE) currentState = STATE_VIGIL;
+        }
+
+        if (currentState == STATE_TITLE) {
+            if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) {
+                StartVigil(true);
+                currentState = STATE_VIGIL;
+            }
+            // Animate title background
+            UpdateGuardian(dt); // Keep guardian moving for title visual
+        } else if (currentState == STATE_VICTORY) {
+            if (IsKeyPressed(KEY_ENTER)) {
+                StartVigil(true);
+                currentState = STATE_TITLE;
+            }
+        } else if (currentState == STATE_DESOLATION) {
             if (IsKeyPressed(KEY_R)) {
                 StartVigil(true);
                 currentState = STATE_VIGIL;
             }
+        } else if (currentState == STATE_PAUSE) {
+            // No update, just draw
         } else {
             UpdateFrame(dt);
         }

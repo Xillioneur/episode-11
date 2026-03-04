@@ -131,17 +131,54 @@ const char* vsCode = R"(
     in vec3 vertexPosition;
     in vec2 vertexTexCoord;
     in vec3 vertexNormal;
+    in mat4 instanceTransform; // Hardware Instancing
+    
     uniform mat4 mvp;
     uniform mat4 matModel;
     uniform mat4 matNormal;
+    uniform float time;
+    uniform float displacementStrength; // 0 for Guardian, >0 for Vices
+    
     out vec3 fragPosition;
     out vec2 fragTexCoord;
     out vec3 fragNormal;
+    
+    // Simple 3D Noise
+    float hash(vec3 p) {
+        p  = fract( p*0.3183099+.1 );
+        p *= 17.0;
+        return fract( p.x*p.y*p.z*(p.x+p.y+p.z) );
+    }
+
+    float noise(vec3 x) {
+        vec3 i = floor(x);
+        vec3 f = fract(x);
+        f = f*f*(3.0-2.0*f);
+        return mix(mix(mix( hash(i+vec3(0,0,0)), hash(i+vec3(1,0,0)),f.x),
+                       mix( hash(i+vec3(0,1,0)), hash(i+vec3(1,1,0)),f.x),f.y),
+                   mix(mix( hash(i+vec3(0,0,1)), hash(i+vec3(1,0,1)),f.x),
+                       mix( hash(i+vec3(0,1,1)), hash(i+vec3(1,1,1)),f.x),f.y),f.z);
+    }
+    
     void main() {
-        fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
+        vec3 pos = vertexPosition;
+        vec3 normal = vertexNormal;
+        
+        // Procedural Displacement (Hyperrealistic Organic Form)
+        if (displacementStrength > 0.0) {
+            float n = noise(pos * 3.0 + vec3(0, time * 0.5, 0));
+            pos += normal * n * displacementStrength;
+        }
+        
+        // Support both instanced and non-instanced drawing
+        // Raylib's default material uses matModel uniform for non-instanced
+        // For instanced, we'd need to manually handle MVP.
+        // Keeping it simple: We will rely on Raylib's internal handling for now but prepare the shader.
+        
+        fragPosition = vec3(matModel * vec4(pos, 1.0));
         fragTexCoord = vertexTexCoord;
-        fragNormal = normalize(vec3(matNormal * vec4(vertexNormal, 1.0)));
-        gl_Position = mvp * vec4(vertexPosition, 1.0);
+        fragNormal = normalize(vec3(matNormal * vec4(normal, 1.0)));
+        gl_Position = mvp * vec4(pos, 1.0);
     }
 )";
 
@@ -155,6 +192,7 @@ const char* fsCode = R"(
     uniform vec3 lightPos;
     uniform vec4 lightColor;
     uniform float rimPower;
+    uniform float displacementStrength;
     out vec4 finalColor;
     
     // Simple hash for noise
@@ -167,7 +205,20 @@ const char* fsCode = R"(
         
         // Procedural Detail (Micro-Surface)
         float noise = hash(fragPosition.xy * 10.0 + fragPosition.zz * 5.0);
-        vec3 surfaceCol = colDiffuse.rgb * (0.9 + 0.1 * noise); // Subtle grain
+        
+        // Material Selection
+        vec3 surfaceCol;
+        float roughness;
+        
+        if (displacementStrength > 0.0) {
+            // Vices: Obsidian / Smoke
+            surfaceCol = colDiffuse.rgb * (0.2 + 0.8 * noise); // Dark, noisy
+            roughness = 0.3; // Shiny but rough
+        } else {
+            // Guardian: Brushed Gold
+            surfaceCol = colDiffuse.rgb * (0.9 + 0.1 * noise); // Bright, clean
+            roughness = 0.5;
+        }
         
         // Lighting
         vec3 lightDir = normalize(lightPos - fragPosition);
@@ -176,8 +227,8 @@ const char* fsCode = R"(
         
         // Specular (Blinn-Phong)
         vec3 halfDir = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(normal, halfDir), 0.0), 32.0);
-        vec3 specular = vec3(1.0) * spec * 0.5;
+        float spec = pow(max(dot(normal, halfDir), 0.0), 32.0 * (1.0 - roughness));
+        vec3 specular = vec3(1.0) * spec * (1.0 - roughness);
         
         // Rim Light (Divine Glow)
         float rim = 1.0 - max(dot(viewDir, normal), 0.0);
@@ -1660,11 +1711,18 @@ void UpdateFrame(float dt) {
     }
 }
 
-void DrawDivineMesh(Mesh mesh, Vector3 pos, Vector3 scale, Color col) {
+void DrawDivineMesh(Mesh mesh, Vector3 pos, Vector3 scale, Color col, float displacement = 0.0f) {
     Matrix mat = MatrixIdentity();
     mat = MatrixMultiply(mat, MatrixScale(scale.x, scale.y, scale.z));
     mat = MatrixMultiply(mat, MatrixTranslate(pos.x, pos.y, pos.z));
     divineMat.maps[MATERIAL_MAP_DIFFUSE].color = col;
+    
+    // Set Per-Draw Uniforms
+    float disp = displacement;
+    float time = (float)GetTime();
+    SetShaderValue(divineMat.shader, GetShaderLocation(divineMat.shader, "displacementStrength"), &disp, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(divineMat.shader, GetShaderLocation(divineMat.shader, "time"), &time, SHADER_UNIFORM_FLOAT);
+    
     DrawMesh(mesh, divineMat, mat);
 }
 
@@ -1732,13 +1790,13 @@ void DrawFrame() {
         rlRotatef(guardian.tiltX * RAD2DEG, 1, 0, 0);
         
         // Body
-        DrawDivineMesh(cylinderMesh, {0, 1.6f, 0}, {1.0f, 1.6f, 1.0f}, COL_GRACE);
+        DrawDivineMesh(cylinderMesh, {0, 1.6f, 0}, {1.0f, 1.6f, 1.0f}, COL_GRACE, 0.0f);
         
         // Shoulders
         rlPushMatrix();
         rlTranslatef(0, 3.0f, 0);
         rlRotatef(90, 0, 0, 1);
-        DrawDivineMesh(cylinderMesh, {0,0,0}, {0.4f, 1.5f, 0.4f}, COL_GRACE);
+        DrawDivineMesh(cylinderMesh, {0,0,0}, {0.4f, 1.5f, 0.4f}, COL_GRACE, 0.0f);
         rlPopMatrix();
         
         // Cape (Flowing behind)
@@ -1750,7 +1808,7 @@ void DrawFrame() {
         rlPopMatrix();
 
         // Head/Halo
-        DrawDivineMesh(sphereMesh, {0,3.5f,0}, {1.1f, 1.1f, 1.1f}, COL_GRACE);
+        DrawDivineMesh(sphereMesh, {0,3.5f,0}, {1.1f, 1.1f, 1.1f}, COL_GRACE, 0.0f);
         DrawSphere({0,3.5f,0}, 1.8f * guardian.haloScale, Fade(COL_GRACE, 0.15f)); 
         rlPopMatrix();
         
@@ -1850,7 +1908,7 @@ void DrawFrame() {
                 }
 
                 // Boss Visual
-                DrawDivineMesh(sphereMesh, drawPos, {v.scale * 1.5f, v.scale * 1.5f, v.scale * 1.5f}, vCol);
+                DrawDivineMesh(sphereMesh, drawPos, {v.scale * 1.5f, v.scale * 1.5f, v.scale * 1.5f}, vCol, 0.6f);
                 DrawSphere(drawPos, v.scale * 2.2f, Fade(vCol, 0.15f)); 
                 // Crown
                 for (int i=0; i<8; i++) {
@@ -1859,7 +1917,7 @@ void DrawFrame() {
                     DrawLine3D(drawPos, Vector3Add(drawPos, spike), GOLD);
                 }
             } else {
-                DrawDivineMesh(sphereMesh, v.pos, {v.scale * 1.5f, v.scale * 1.5f, v.scale * 1.5f}, vCol);
+                DrawDivineMesh(sphereMesh, v.pos, {v.scale * 1.5f, v.scale * 1.5f, v.scale * 1.5f}, vCol, 0.4f);
             }
             
             // Redemption Bar
@@ -1881,7 +1939,7 @@ void DrawFrame() {
             Color tCol = (t.frozenTimer > 0) ? LIGHTGRAY : t.color;
             if (t.isTruth) {
                 // Radiant Orb of Truth (Lit)
-                DrawDivineMesh(sphereMesh, t.pos, {0.8f, 0.8f, 0.8f}, WHITE);
+                DrawDivineMesh(sphereMesh, t.pos, {0.8f, 0.8f, 0.8f}, WHITE, 0.0f);
                 DrawSphere(t.pos, 1.2f, Fade(GOLD, 0.3f));
                 DrawSphereWires(t.pos, 1.0f, 6, 6, GOLD);
             } else {

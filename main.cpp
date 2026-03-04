@@ -219,6 +219,7 @@ const char* fsPost = R"(
 Mesh sphereMesh;
 Mesh cylinderMesh;
 Mesh cubeMesh;
+Mesh floorLinesMesh; // Baked floor geometry
 Material divineMat;
 Shader postShader;
 RenderTexture2D target;
@@ -503,6 +504,54 @@ void SpawnMotes(Vector3 pos, Color col, int count, float speed, MoteType type = 
 // Logic
 // ======================================================================
 
+// Baked Geometry Generation
+Mesh GenRadiantFloorMesh() {
+    Mesh mesh = { 0 };
+    int segments = 12;
+    int circles = 5;
+    int vertexCount = (segments * 2) + (circles * 64 * 2); // lines + circle edges
+    
+    mesh.vertices = (float *)MemAlloc(vertexCount * 3 * sizeof(float));
+    mesh.colors = (unsigned char *)MemAlloc(vertexCount * 4 * sizeof(unsigned char));
+    mesh.vertexCount = vertexCount;
+
+    int vIdx = 0;
+    int cIdx = 0;
+
+    // Radiant Lines
+    for (int i = 0; i < segments; i++) {
+        float ang = (float)i / segments * 2.0f * PI;
+        Vector3 start = { cosf(ang) * 5.0f, 0, sinf(ang) * 5.0f };
+        Vector3 end = { cosf(ang) * 120.0f, 0, sinf(ang) * 120.0f };
+        
+        mesh.vertices[vIdx++] = start.x; mesh.vertices[vIdx++] = start.y; mesh.vertices[vIdx++] = start.z;
+        mesh.vertices[vIdx++] = end.x; mesh.vertices[vIdx++] = end.y; mesh.vertices[vIdx++] = end.z;
+        
+        for (int k = 0; k < 2; k++) {
+            mesh.colors[cIdx++] = 255; mesh.colors[cIdx++] = 255; mesh.colors[cIdx++] = 255; mesh.colors[cIdx++] = 40;
+        }
+    }
+
+    // Concentric Circles
+    for (int r = 1; r <= circles; r++) {
+        float radius = r * 25.0f;
+        for (int i = 0; i < 64; i++) {
+            float ang1 = (float)i / 64.0f * 2.0f * PI;
+            float ang2 = (float)(i + 1) / 64.0f * 2.0f * PI;
+            
+            mesh.vertices[vIdx++] = cosf(ang1) * radius; mesh.vertices[vIdx++] = 0; mesh.vertices[vIdx++] = sinf(ang1) * radius;
+            mesh.vertices[vIdx++] = cosf(ang2) * radius; mesh.vertices[vIdx++] = 0; mesh.vertices[vIdx++] = sinf(ang2) * radius;
+            
+            for (int k = 0; k < 2; k++) {
+                mesh.colors[cIdx++] = 255; mesh.colors[cIdx++] = 255; mesh.colors[cIdx++] = 255; mesh.colors[cIdx++] = 30;
+            }
+        }
+    }
+
+    UploadMesh(&mesh, false);
+    return mesh;
+}
+
 void InitLumenFidei() {
     camera.fovy = 55.0f;
     camera.projection = CAMERA_PERSPECTIVE;
@@ -511,9 +560,10 @@ void InitLumenFidei() {
     camera.target = {0, 0, 0};
     
     // Graphics Init
-    sphereMesh = GenMeshSphere(1.0f, 32, 32); // Smoother
-    cylinderMesh = GenMeshCylinder(1.0f, 1.0f, 32); // Smoother
+    sphereMesh = GenMeshSphere(1.0f, 32, 32); 
+    cylinderMesh = GenMeshCylinder(1.0f, 1.0f, 32); 
     cubeMesh = GenMeshCube(1.0f, 1.0f, 1.0f);
+    floorLinesMesh = GenRadiantFloorMesh();
     
     Shader sh = LoadShaderFromMemory(vsCode, fsCode);
     divineMat = LoadMaterialDefault();
@@ -1630,17 +1680,9 @@ void DrawFrame() {
     ClearBackground(currentSkyTop); 
     
     BeginMode3D(camera);
-        // Stained Glass Radiant Floor
+        // Stained Glass Radiant Floor (Baked)
         DrawPlane({0,-0.1f,0}, {250, 250}, currentFloorBase);
-        for (int i = 0; i < 12; i++) {
-            float ang = (float)i / 12 * 2 * PI;
-            Vector3 start = {cosf(ang) * 5.0f, 0, sinf(ang) * 5.0f};
-            Vector3 end = {cosf(ang) * 120.0f, 0, sinf(ang) * 120.0f};
-            DrawLine3D(start, end, currentLineCol);
-            for (int r = 1; r < 5; r++) {
-                DrawCircle3D({0, 0, 0}, r * 25.0f, {0, 1, 0}, 90.0f, currentLineCol);
-            }
-        }
+        DrawMesh(floorLinesMesh, LoadMaterialDefault(), MatrixIdentity());
         
         // Saintly Ghost Trail (Subtle Secondary Blur)
         if (!guardian.ghosts.empty()) {

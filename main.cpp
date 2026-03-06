@@ -286,7 +286,7 @@ RenderTexture2D target;
 // Enums & Structs
 // ======================================================================
 enum GameState { STATE_TITLE, STATE_VIGIL, STATE_ALTAR, STATE_DESOLATION, STATE_PAUSE, STATE_VICTORY };
-enum ViceType { WHISPERER, ACCUSER, RAGER, CARDINAL_SIN };
+enum ViceType { WHISPERER, ACCUSER, RAGER, SLOTH, GLUTTON, LUST, CARDINAL_SIN };
 
 struct Temptation {
     Vector3 pos;
@@ -340,6 +340,7 @@ struct Guardian {
     float meritMult = 1.0f;
     float fervorRegenMult = 1.0f;
     float dashCostMult = 1.0f;
+    float accelMult = 1.0f;
     float haloScale = 1.0f;
     
     // Divine Leveling (Seamless Upgrades)
@@ -418,6 +419,7 @@ struct Guardian {
         meritMult = 1.0f;
         fervorRegenMult = 1.0f;
         dashCostMult = 1.0f;
+        accelMult = 1.0f;
         haloScale = 1.0f;
         level = 1;
         spiritPoints = 0;
@@ -527,6 +529,7 @@ Color currentLineCol = {255, 245, 180, 50};
 
 bool debugMode = false;
 bool godMode = false;
+float flareIntensity = 0.0f; // Mansion IV Hazard
 
 Guardian guardian;
 AIDirector director;
@@ -671,18 +674,26 @@ void StartVigil(bool fullReset) {
         int count = 6 + (vigilCount * 2);
         for (int i = 0; i < count; i++) {
             Vice v;
-            v.type = (i % 6 == 0) ? RAGER : (i % 4 == 0) ? ACCUSER : WHISPERER;
-            v.maxCorruption = (v.type == RAGER) ? 180 : (v.type == ACCUSER) ? 120 : 50;
+            // Immediate variety for testing and gameplay impact
+            int r = GetRandomValue(0, 100);
+            if (r < 25) v.type = WHISPERER;
+            else if (r < 45) v.type = ACCUSER;
+            else if (r < 65) v.type = RAGER;
+            else if (r < 80) v.type = SLOTH;
+            else if (r < 92) v.type = GLUTTON;
+            else v.type = LUST;
+
+            v.maxCorruption = (v.type == SLOTH) ? 500 : (v.type == GLUTTON) ? 400 : (v.type == ACCUSER) ? 180 : (v.type == RAGER) ? 250 : 80;
             v.corruption.store(v.maxCorruption);
-            v.moveSpeed = (v.type == WHISPERER) ? 9.5f : (v.type == RAGER) ? 8.0f : 7.0f;
-            v.scale = (v.type == RAGER) ? 2.0f : (v.type == ACCUSER) ? 1.6f : 0.9f;
-            v.formationAngle = ((float)i / count) * 2.0f * PI; // Coordinated spread
-            v.attackTimer = GetRandomValue(10, 50) / 10.0f;
+            v.moveSpeed = (v.type == LUST) ? 12.0f : (v.type == WHISPERER) ? 10.0f : (v.type == SLOTH) ? 2.8f : 8.5f;
+            v.scale = (v.type == SLOTH) ? 4.5f : (v.type == GLUTTON) ? 3.2f : (v.type == RAGER) ? 2.2f : (v.type == LUST) ? 1.3f : 1.2f;
+            v.formationAngle = ((float)i / count) * 2.0f * PI; 
+            v.attackTimer = GetRandomValue(5, 30) / 10.0f;
             
             float ang = GetRandomValue(0, 360) * DEG2RAD;
-            float dist = GetRandomValue(45, 80);
-        v.pos = {cosf(ang) * dist, 0, sinf(ang) * dist};
-        vices.push_back(std::move(v));
+            float dist = GetRandomValue(50, 110); 
+            v.pos = {cosf(ang) * dist, 0, sinf(ang) * dist};
+            vices.push_back(std::move(v));
         }
     }
     initialViceCount = (int)vices.size();
@@ -747,6 +758,7 @@ void UpdateGuardian(float dt) {
             guardian.spiritPoints--; guardian.haloScale += 0.12f;
             SpawnMotes(guardian.pos, PINK, 30, 12.0f);
         } else if (IsKeyPressed(KEY_FOUR)) {
+            guardian.accelMult += 0.20f;
             guardian.dashCostMult *= 0.85f; 
             guardian.spiritPoints--; guardian.haloScale += 0.12f;
             SpawnMotes(guardian.pos, SKYBLUE, 30, 12.0f);
@@ -922,8 +934,9 @@ void UpdateGuardian(float dt) {
             while (angleDiff < -PI) angleDiff += 2*PI;
             guardian.heading += angleDiff * 10.0f * dt;
             
-            // Apply Acceleration in Heading direction (Fortitude Buff)
-            float currentAccel = guardian.hasFortitude ? PLAYER_ACCEL * 1.4f : PLAYER_ACCEL;
+            // Apply Acceleration in Heading direction (Fortitude Upgrade + Relic)
+            float totalAccelMult = guardian.accelMult * (guardian.hasFortitude ? 1.4f : 1.0f);
+            float currentAccel = PLAYER_ACCEL * totalAccelMult;
             Vector3 force = {sinf(guardian.heading), 0, cosf(guardian.heading)};
             guardian.vel = Vector3Add(guardian.vel, Vector3Scale(force, currentAccel * dt));
             
@@ -974,8 +987,16 @@ void UpdateGuardian(float dt) {
         SpawnMotes(guardian.pos, COL_SPIRIT, 1, 2.0f);
     }
     
+    // Sloth Gravity Aura check
+    float slothDragMult = 1.0f;
+    for (const auto& v : vices) {
+        if (v.type == SLOTH && !v.redeemed) {
+            if (Vector3Distance(v.pos, guardian.pos) < 35.0f) slothDragMult = 2.5f;
+        }
+    }
+
     // Apply Drag / Friction
-    float dragFactor = 1.0f - (PLAYER_DRAG * dt);
+    float dragFactor = 1.0f - (PLAYER_DRAG * slothDragMult * dt);
     if (dragFactor < 0) dragFactor = 0;
     guardian.vel = Vector3Scale(guardian.vel, dragFactor);
     
@@ -1122,8 +1143,17 @@ void UpdateVices(float dt) {
                     }
 
                     // 3. Apply Combined Forces
+                    float moveSpeedMult = (v.type == SLOTH) ? 0.5f : (v.type == LUST) ? 1.5f : 1.0f;
                     Vector3 finalMoveDir = Vector3Normalize(Vector3Add(Vector3Scale(formationDir, 1.0f), Vector3Scale(separation, 1.5f)));
-                    v.pos = Vector3Add(v.pos, Vector3Scale(finalMoveDir, v.moveSpeed * dt));
+                    v.pos = Vector3Add(v.pos, Vector3Scale(finalMoveDir, v.moveSpeed * moveSpeedMult * dt));
+
+                    // Unique Behaviors
+                    if (v.type == LUST && v.stateTimer <= 0) {
+                        v.stateTimer = 4.0f;
+                        SpawnMotes(v.pos, PINK, 10, 5.0f, MOTE_SPARK, &threadMotes[t]);
+                        float bAng = (float)GetRandomValue(0, 360) * DEG2RAD;
+                        v.pos = Vector3Add(v.pos, {cosf(bAng)*15, 0, sinf(bAng)*15});
+                    }
 
                     if (v.type == RAGER && dist < 18.0f && guardian.isSwinging) {
                         // Elite Reflex Dodge (unchanged but faster)
@@ -1145,20 +1175,44 @@ void UpdateVices(float dt) {
                             director.attackTokens--;
                             
                             if (v.type == WHISPERER) {
-                                // Predictive Shot
-                                Vector3 futureDir = Vector3Normalize(Vector3Subtract(director.predictedPlayerPos, spawnPos));
-                                SpawnTemptation(spawnPos, Vector3Scale(futureDir, 22.0f), COL_TEMPTATION, false, &threadTemps[t]);
-                                v.attackTimer = 1.2f;
-                            } else if (v.type == ACCUSER) {
-                                // Burst Fire
+                                // Sacred Geometry: Rose Curve (Floral Pattern)
+                                float k = 3.0f; // 3-petaled rose
+                                float ang = GetTime() * 4.0f;
+                                float r = cosf(k * ang);
+                                Vector3 roseDir = { r * cosf(ang), 0, r * sinf(ang) };
+                                SpawnTemptation(spawnPos, Vector3Scale(roseDir, 22.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                v.attackTimer = 0.15f; 
+                            } else if (v.type == SLOTH) {
+                                // Sloth: Heavy Thorns
                                 Vector3 toP = Vector3Normalize(Vector3Subtract(guardian.pos, spawnPos));
-                                SpawnTemptation(spawnPos, Vector3Scale(toP, 16.0f), COL_TEMPTATION, false, &threadTemps[t]);
-                                v.attackTimer = 0.5f; // Fast burst
+                                SpawnTemptation(spawnPos, Vector3Scale(toP, 10.0f), PURPLE, false, &threadTemps[t]);
+                                v.attackTimer = 3.5f;
+                            } else if (v.type == GLUTTON) {
+                                // Glutton: Targeted Bursts
+                                Vector3 toP = Vector3Normalize(Vector3Subtract(guardian.pos, spawnPos));
+                                SpawnTemptation(spawnPos, Vector3Scale(toP, 14.0f), ORANGE, false, &threadTemps[t]);
+                                v.attackTimer = 1.5f;
+                            } else if (v.type == LUST) {
+                                // Lust: Rapid Flickering Doubts
+                                for(int k=0; k<2; k++) {
+                                    Vector3 spread = Vector3RotateByAxisAngle(dir, {0,1,0}, (float)GetRandomValue(-10,10)*0.01f);
+                                    SpawnTemptation(spawnPos, Vector3Scale(spread, 30.0f), PINK, false, &threadTemps[t]);
+                                }
+                                v.attackTimer = 0.8f;
+                            } else if (v.type == ACCUSER) {
+                                // Sacred Geometry: Triquetra Spiral
+                                float ang = GetTime() * 2.5f;
+                                for(int k=0; k<3; k++) {
+                                    float a = ang + k * (2.0f * PI / 3.0f);
+                                    Vector3 triDir = { cosf(a), 0, sinf(a) };
+                                    SpawnTemptation(spawnPos, Vector3Scale(triDir, 18.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                }
+                                v.attackTimer = 0.6f;
                             } else if (v.type == RAGER) {
-                                // Charge Impulse
-                                v.pos = Vector3Add(v.pos, Vector3Scale(dir, 12.0f)); 
-                                SpawnTemptation(spawnPos, Vector3Scale(dir, 28.0f), MAROON, false, &threadTemps[t]);
-                                v.attackTimer = 2.5f;
+                                // Sonic Lunge (Impulse toward player)
+                                v.pos = Vector3Add(v.pos, Vector3Scale(dir, 15.0f)); 
+                                SpawnTemptation(spawnPos, Vector3Scale(dir, 32.0f), MAROON, false, &threadTemps[t]);
+                                v.attackTimer = 2.0f;
                             }
                         } else {
                             v.attackTimer = 0.2f; // Wait for token
@@ -1361,6 +1415,26 @@ void UpdateTemptations(float dt) {
                 }
 
                 if (temp.isTruth) {
+                    // Glutton Vacuum Check
+                    for (auto& v : vices) {
+                        if (v.type == GLUTTON && !v.redeemed) {
+                            float d = Vector3Distance(temp.pos, v.pos);
+                            if (d < 15.0f) {
+                                // Pull Truth towards Glutton
+                                Vector3 pull = Vector3Normalize(Vector3Subtract(v.pos, temp.pos));
+                                temp.vel = Vector3Add(temp.vel, Vector3Scale(pull, 20.0f * dt));
+                                if (d < v.scale * 1.5f) {
+                                    // Absorbed!
+                                    v.corruption.store(v.corruption.load() + 50.0f); // Grow stronger
+                                    v.scale += 0.1f;
+                                    temp.life = 0;
+                                    SpawnMotes(v.pos, ORANGE, 5, 2.0f, MOTE_SPARK, &threadMotes[t]);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     // Collision with Vices (Redemption)
                     if (temp.life <= 0) continue;
                     for (auto& v : vices) {
@@ -1567,7 +1641,8 @@ void UpdateFrame(float dt) {
     currentLineCol = ColorLerp(currentLineCol, targetLine, 2.0f * dt);
 
     mansionTitleTimer = std::max(0.0f, mansionTitleTimer - dt);
-    
+    flareIntensity = std::max(0.0f, flareIntensity - dt * 0.5f); // Natural decay
+
     // Ambient Atmosphere (Dust)
     if (fmodf(GetTime(), 0.02f) < dt) {
         Vector3 spawnPos = { guardian.pos.x + (float)GetRandomValue(-60,60), (float)GetRandomValue(2, 35), guardian.pos.z + (float)GetRandomValue(-60,60) };
@@ -1583,6 +1658,17 @@ void UpdateFrame(float dt) {
     director.predictedPlayerPos = Vector3Add(guardian.pos, Vector3Scale(guardian.vel, 0.8f)); // Look ahead 0.8s
 
     // Mansion Hazards (F14)
+    float slothDragMult = 1.0f;
+    for (const auto& v : vices) {
+        if (v.type == SLOTH && !v.redeemed) {
+            float d = Vector3Distance(v.pos, guardian.pos);
+            if (d < 35.0f) {
+                slothDragMult = std::max(slothDragMult, 2.5f); // 2.5x more drag
+                if (fmodf(GetTime(), 0.3f) < dt) SpawnMotes(guardian.pos, PURPLE, 1, 1.0f);
+            }
+        }
+    }
+
     if (!guardian.isPraying) {
         if (vigilCount >= 6 && vigilCount <= 10) { // Mansion II: Wind
             float windStrength = 18.0f * (1.0f + 0.5f * sinf(GetTime() * 0.8f));
@@ -1593,6 +1679,11 @@ void UpdateFrame(float dt) {
             Vector3 toCenter = Vector3Normalize(Vector3Subtract({0,0,0}, guardian.pos));
             float pullStrength = Vector3Distance({0,0,0}, guardian.pos) * 0.4f;
             guardian.vel = Vector3Add(guardian.vel, Vector3Scale(toCenter, pullStrength * dt));
+        } else if (vigilCount >= 16 && vigilCount <= 20) { // Mansion IV: Blinding Brilliance
+            if (fmodf(GetTime(), 6.0f) < dt) {
+                flareIntensity = 1.2f; // Spike!
+                screenShake = 0.4f;
+            }
         }
     }
 
@@ -1828,8 +1919,18 @@ void DrawFrame() {
 
         // Head/Halo
         DrawDivineMesh(sphereMesh, {0,3.5f,0}, {1.1f, 1.1f, 1.1f}, COL_GRACE, 0.0f);
-        DrawSphere({0,3.5f,0}, 1.8f * guardian.haloScale, Fade(COL_GRACE, 0.15f)); 
+        float hS = guardian.haloScale * (1.0f + flareIntensity * 0.5f);
+        DrawSphere({0,3.5f,0}, 1.8f * hS, Fade(COL_GRACE, 0.15f + flareIntensity * 0.2f)); 
         rlPopMatrix();
+
+        // Blinding Brilliance Overlay (F14)
+        if (flareIntensity > 0.01f) {
+            EndMode3D();
+            BeginBlendMode(BLEND_ADDITIVE);
+            DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Fade(WHITE, flareIntensity * 0.4f));
+            EndBlendMode();
+            BeginMode3D(camera);
+        }
         
         if (guardian.isCrossing) {
             float progress = 1.0f - (guardian.crossTimer / guardian.crossDuration);
@@ -1914,6 +2015,10 @@ void DrawFrame() {
         // Vices
         for (const auto& v : vices) {
             Color vCol = (v.stunned) ? GRAY : (v.type == CARDINAL_SIN) ? COL_BOSS : currentViceCol;
+            if (v.type == SLOTH) vCol = PURPLE;
+            else if (v.type == GLUTTON) vCol = ORANGE;
+            else if (v.type == LUST) vCol = PINK;
+            
             if (v.redeemed) vCol = GOLD;
             
             Vector3 drawPos = v.pos;

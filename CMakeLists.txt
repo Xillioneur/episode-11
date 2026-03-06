@@ -12,5 +12,6 @@ add_executable(LumenFidei main.cpp)
 target_link_libraries(LumenFidei PRIVATE raylib)
 
 if(APPLE)
-    target_link_libraries(LumenFidei PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
+    # Explicitly link OpenGL and Core macOS frameworks for Shader support
+    target_link_libraries(LumenFidei PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL" "-framework CoreVideo")
 endif()

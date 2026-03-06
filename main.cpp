@@ -193,50 +193,46 @@ const char* fsCode = R"(
     uniform vec4 lightColor;
     uniform float rimPower;
     uniform float displacementStrength;
+    uniform float time;
     out vec4 finalColor;
     
-    // Simple hash for noise
-    float hash(vec2 p) { return fract(1e4 * sin(17.0 * p.x + p.y * 0.1) * (0.1 + abs(sin(p.y * 13.0 + p.x)))); }
-    
     void main() {
-        // Base
         vec3 normal = normalize(fragNormal);
         vec3 viewDir = normalize(viewPos - fragPosition);
+        float NdotV = max(dot(normal, viewDir), 0.0);
         
-        // Procedural Detail (Micro-Surface)
-        float noise = hash(fragPosition.xy * 10.0 + fragPosition.zz * 5.0);
+        // 1. Divine Edges (Gold Wireframe)
+        float edge = 1.0 - NdotV;
+        edge = smoothstep(0.6, 0.95, edge); // Sharp gold rim
+        vec3 edgeColor = vec3(1.0, 0.8, 0.2) * 2.0; // HDR Gold
         
-        // Material Selection
-        vec3 surfaceCol;
-        float roughness;
+        // 2. Blueprint Grid Interior
+        // Triplanar mapping for grid
+        vec3 coord = fragPosition * 2.0;
+        float gridX = step(0.95, fract(coord.x + time * 0.1));
+        float gridY = step(0.95, fract(coord.y + time * 0.15));
+        float gridZ = step(0.95, fract(coord.z));
+        float grid = max(max(gridX, gridY), gridZ);
         
+        // 3. Material Base
+        vec3 baseColor;
         if (displacementStrength > 0.0) {
-            // Vices: Obsidian / Smoke
-            surfaceCol = colDiffuse.rgb * (0.2 + 0.8 * noise); // Dark, noisy
-            roughness = 0.3; // Shiny but rough
+            // Vices: Void Stone
+            baseColor = vec3(0.05, 0.05, 0.05);
+            edgeColor = vec3(0.8, 0.1, 0.1) * 2.0; // Red Edges for Vices
         } else {
-            // Guardian: Brushed Gold
-            surfaceCol = colDiffuse.rgb * (0.9 + 0.1 * noise); // Bright, clean
-            roughness = 0.5;
+            // Guardian: Lapis Lazuli
+            baseColor = vec3(0.0, 0.1, 0.3);
         }
         
         // Lighting
         vec3 lightDir = normalize(lightPos - fragPosition);
         float diff = max(dot(normal, lightDir), 0.0);
-        vec3 diffuse = diff * lightColor.rgb;
         
-        // Specular (Blinn-Phong)
-        vec3 halfDir = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(normal, halfDir), 0.0), 32.0 * (1.0 - roughness));
-        vec3 specular = vec3(1.0) * spec * (1.0 - roughness);
+        // Final Composition
+        vec3 interior = mix(baseColor, edgeColor * 0.5, grid * 0.3);
+        vec3 result = mix(interior * (0.5 + diff), edgeColor, edge);
         
-        // Rim Light (Divine Glow)
-        float rim = 1.0 - max(dot(viewDir, normal), 0.0);
-        rim = pow(rim, rimPower);
-        vec3 rimColor = vec3(1.0, 0.9, 0.6) * rim * 1.5;
-        
-        // Combine
-        vec3 result = (0.2 + diffuse) * surfaceCol + specular + rimColor;
         finalColor = vec4(result, colDiffuse.a);
     }
 )";
@@ -246,9 +242,19 @@ const char* fsPost = R"(
     in vec2 fragTexCoord;
     in vec4 fragColor;
     uniform sampler2D texture0;
+    uniform float aberrationStrength; // Dynamic juice
     out vec4 finalColor;
+    
     void main() {
-        vec3 color = texture(texture0, fragTexCoord).rgb;
+        // Chromatic Aberration
+        vec2 dist = fragTexCoord - 0.5;
+        vec2 offset = dist * aberrationStrength * 0.02;
+        
+        float r = texture(texture0, fragTexCoord - offset).r;
+        float g = texture(texture0, fragTexCoord).g;
+        float b = texture(texture0, fragTexCoord + offset).b;
+        
+        vec3 color = vec3(r, g, b);
         
         // Tone Mapping (Reinhard)
         color = color / (color + vec3(1.0));
@@ -270,6 +276,7 @@ const char* fsPost = R"(
 Mesh sphereMesh;
 Mesh cylinderMesh;
 Mesh cubeMesh;
+Mesh polyMesh; // Geometric shards
 Mesh floorLinesMesh; // Baked floor geometry
 Material divineMat;
 Shader postShader;
@@ -610,22 +617,24 @@ void InitLumenFidei() {
     camera.position = {0, CAMERA_HEIGHT, CAMERA_DISTANCE};
     camera.target = {0, 0, 0};
     
-    // Graphics Init
+    // Graphics Init (Sacred Geometry)
     sphereMesh = GenMeshSphere(1.0f, 32, 32); 
-    cylinderMesh = GenMeshCylinder(1.0f, 1.0f, 32); 
-    cubeMesh = GenMeshCube(1.0f, 1.0f, 1.0f);
+    cylinderMesh = GenMeshTorus(0.8f, 1.2f, 32, 32); // Halo Rings
+    cubeMesh = GenMeshKnot(0.8f, 1.2f, 128, 32); // Complex Vice Core
     floorLinesMesh = GenRadiantFloorMesh();
+    polyMesh = GenMeshPoly(6, 1.5f); // Hexagonal prisms
     
+    // Load Shaders
     Shader sh = LoadShaderFromMemory(vsCode, fsCode);
     divineMat = LoadMaterialDefault();
     divineMat.shader = sh;
     
-    // Set shader uniforms (defaults)
-    int rimLoc = GetShaderLocation(sh, "rimPower");
-    float rimP = 3.0f;
-    SetShaderValue(sh, rimLoc, &rimP, SHADER_UNIFORM_FLOAT);
-    
     postShader = LoadShaderFromMemory(0, fsPost);
+    
+    // Initialize Uniform Locations
+    float rimP = 3.0f;
+    SetShaderValue(sh, GetShaderLocation(sh, "rimPower"), &rimP, SHADER_UNIFORM_FLOAT);
+    
     target = LoadRenderTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
     
     StartVigil(true);
@@ -1559,6 +1568,12 @@ void UpdateFrame(float dt) {
 
     mansionTitleTimer = std::max(0.0f, mansionTitleTimer - dt);
     
+    // Ambient Atmosphere (Dust)
+    if (fmodf(GetTime(), 0.02f) < dt) {
+        Vector3 spawnPos = { guardian.pos.x + (float)GetRandomValue(-60,60), (float)GetRandomValue(2, 35), guardian.pos.z + (float)GetRandomValue(-60,60) };
+        SpawnMotes(spawnPos, Fade(WHITE, 0.25f), 1, 0.3f);
+    }
+
     // AI Director Update
     director.tokenRegenTimer -= dt;
     if (director.tokenRegenTimer <= 0) {
@@ -1738,6 +1753,10 @@ void DrawFrame() {
     ClearBackground(currentSkyTop); 
     
     BeginMode3D(camera);
+        // Atmospheric Sky Shell
+        DrawSphere({0,0,0}, 250.0f, Fade(currentSkyTop, 0.3f));
+        DrawSphereWires({0,0,0}, 255.0f, 16, 16, Fade(currentLineCol, 0.05f));
+
         // Stained Glass Radiant Floor (Baked)
         DrawPlane({0,-0.1f,0}, {250, 250}, currentFloorBase);
         DrawMesh(floorLinesMesh, LoadMaterialDefault(), MatrixIdentity());
@@ -1899,6 +1918,7 @@ void DrawFrame() {
             
             Vector3 drawPos = v.pos;
             if (v.type == CARDINAL_SIN) {
+                // Boss Visual: Massive Fractured Core
                 if (v.state == VICE_TELEGRAPH) {
                     drawPos.x += (float)GetRandomValue(-10, 10) * 0.05f;
                     drawPos.z += (float)GetRandomValue(-10, 10) * 0.05f;
@@ -1907,17 +1927,26 @@ void DrawFrame() {
                     vCol = Fade(GRAY, 0.6f);
                 }
 
-                // Boss Visual
-                DrawDivineMesh(sphereMesh, drawPos, {v.scale * 1.5f, v.scale * 1.5f, v.scale * 1.5f}, vCol, 0.6f);
-                DrawSphere(drawPos, v.scale * 2.2f, Fade(vCol, 0.15f)); 
-                // Crown
-                for (int i=0; i<8; i++) {
-                    float ang = i * PI/4 + GetTime();
-                    Vector3 spike = {cosf(ang) * v.scale, v.scale * 2.0f, sinf(ang) * v.scale};
-                    DrawLine3D(drawPos, Vector3Add(drawPos, spike), GOLD);
+                DrawDivineMesh(sphereMesh, drawPos, {v.scale, v.scale, v.scale}, vCol, 0.6f);
+                
+                // Orbiting Great Shards
+                for (int i=0; i<5; i++) {
+                    float t = GetTime() * 2.0f + i * 2.0f;
+                    Vector3 offset = {sinf(t)*v.scale*1.5f, cosf(t*0.7f)*v.scale*1.5f, cosf(t)*v.scale*1.5f};
+                    DrawDivineMesh(polyMesh, Vector3Add(drawPos, offset), {v.scale*0.4f, v.scale*0.4f, v.scale*0.4f}, vCol, 0.4f);
                 }
+                
+                DrawSphere(drawPos, v.scale * 2.2f, Fade(vCol, 0.15f)); 
             } else {
-                DrawDivineMesh(sphereMesh, v.pos, {v.scale * 1.5f, v.scale * 1.5f, v.scale * 1.5f}, vCol, 0.4f);
+                // Regular Vice: Floating Shards
+                DrawDivineMesh(sphereMesh, v.pos, {v.scale * 0.8f, v.scale * 0.8f, v.scale * 0.8f}, vCol, 0.4f);
+                
+                // 3 Orbiting Shards
+                for (int i=0; i<3; i++) {
+                    float t = GetTime() * 3.0f + i * (2*PI/3);
+                    Vector3 offset = {sinf(t)*v.scale, sinf(t*2.0f)*v.scale*0.5f, cosf(t)*v.scale};
+                    DrawDivineMesh(polyMesh, Vector3Add(v.pos, offset), {v.scale*0.3f, v.scale*0.3f, v.scale*0.3f}, vCol, 0.4f);
+                }
             }
             
             // Redemption Bar
@@ -1985,11 +2014,17 @@ void DrawFrame() {
     EndMode3D();
     EndTextureMode();
     
-    // Post-Process Pass
+    // Post-Process Pass (Screen Space)
     BeginDrawing();
     ClearBackground(BLACK);
+    
     BeginShaderMode(postShader);
-    DrawTextureRec(target.texture, {0, 0, (float)target.texture.width, (float)-target.texture.height}, {0,0}, WHITE);
+    // Chromatic Aberration tied to screenShake
+    float aberration = screenShake * 1.5f;
+    SetShaderValue(postShader, GetShaderLocation(postShader, "aberrationStrength"), &aberration, SHADER_UNIFORM_FLOAT);
+    
+    // Draw the scene texture, flipping it vertically
+    DrawTextureRec(target.texture, (Rectangle){ 0, 0, (float)target.texture.width, (float)-target.texture.height }, (Vector2){ 0, 0 }, WHITE);
     EndShaderMode();
     
     // UI (On top of post-process)

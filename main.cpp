@@ -272,15 +272,180 @@ const char* fsPost = R"(
     }
 )";
 
+// Audio Resources
+Sound sndSwingHumility, sndSwingMercy, sndSwingCharity;
+Sound sndParry, sndGrace, sndSpirit, sndPax, sndClaritas, sndCanticle;
+Sound sndHeartbeat, sndLevelUp, sndViceRedeemed, sndBlessing, sndDash, sndHit;
+Sound sndAmbienceI, sndAmbienceII, sndAmbienceIII, sndAmbienceIV, sndAmbienceV;
+Sound sndViceWhisper, sndViceAccuse, sndViceRage, sndViceSloth, sndViceGlutton, sndViceLust, sndViceBoss;
+Sound sndTemptationSpawn, sndTemptationHit, sndRebuke;
+
+// Sound Alias Pool for overlapping effects (F27)
+const int MAX_ALIASES = 32;
+Sound sndAliases[40][MAX_ALIASES]; // Array for each type
+int sndAliasIndices[40] = {0};
+
+void PlaySoundPooled(int type, float pitch = 1.0f, float pan = 0.5f) {
+    int idx = sndAliasIndices[type];
+    SetSoundPitch(sndAliases[type][idx], pitch);
+    SetSoundPan(sndAliases[type][idx], pan);
+    PlaySound(sndAliases[type][idx]);
+    sndAliasIndices[type] = (idx + 1) % MAX_ALIASES;
+}
+
 // Graphics Resources
 Mesh sphereMesh;
 Mesh cylinderMesh;
+Mesh torusMesh;
+Mesh knotMesh;
+Mesh polyMesh; // Shards
 Mesh cubeMesh;
-Mesh polyMesh; // Geometric shards
-Mesh floorLinesMesh; // Baked floor geometry
+Mesh floorLinesMesh; 
 Material divineMat;
 Shader postShader;
 RenderTexture2D target;
+
+// ======================================================================
+// Synthesis Engine (Hyperrealistic Divine Soundscapes)
+// ======================================================================
+Sound GenerateDivineSound(int type) {
+    int sampleRate = 44100;
+    float duration = 1.0f;
+    if (type <= 2) duration = 0.8f;   // Swings
+    else if (type == 3) duration = 1.5f; // Parry (Long Ring)
+    else if (type == 4) duration = 1.2f; // Heartbeat
+    else if (type >= 5 && type <= 8) duration = 3.0f;
+    else if (type == 9) duration = 6.0f;  // Canticle
+    else if (type == 10) duration = 4.0f; // LevelUp
+    else if (type == 11) duration = 2.0f; // Redeemed
+    else if (type == 12) duration = 2.5f; // Blessing
+    else if (type == 13) duration = 0.5f; // Dash
+    else if (type == 14) duration = 0.6f; // Hit
+    else if (type >= 15 && type <= 19) duration = 20.0f; // Ambiences
+    else if (type >= 20) duration = 1.2f; // AI sounds
+
+    int durationFrames = (int)(duration * sampleRate);
+    short *data = (short *)MemAlloc(durationFrames * sizeof(short));
+
+    for (int i = 0; i < durationFrames; i++) {
+        float t = (float)i / sampleRate;
+        float v = 0.0f;
+
+        if (type <= 2) { // Censer Swings: Air Displacement + Heavy Chain Resonance
+            float envAir = expf(-12.0f * t) * (1.0f - expf(-50.0f * t));
+            float envChain = expf(-4.0f * t);
+            // 1. Whushing Air (Band-passed Noise)
+            float noise = ((float)GetRandomValue(-100, 100) / 100.0f) * envAir * 0.4f;
+            // 2. Chain Clink (Metallic Harmonics)
+            float freq = 120.0f + type * 30.0f;
+            for(int k=1; k<8; k++) {
+                v += (1.0f / (k*1.5f)) * sinf(2.0f * PI * freq * k * 1.02f * t) * envChain;
+            }
+            v = (v * 0.5f) + noise;
+        } else if (type == 3) { // Parry: High-Density Crystal Impact (Physical Model)
+            float env = expf(-3.5f * t);
+            float click = expf(-100.0f * t) * 0.8f; // Initial transient
+            // Non-harmonic overtones of a metal plate
+            float freqs[] = {880.0f, 1325.0f, 1840.0f, 2450.0f, 3100.0f};
+            for(int k=0; k<5; k++) {
+                v += (1.0f / (k+1)) * sinf(2.0f * PI * freqs[k] * t) * expf(-(2.0f + k) * t);
+            }
+            v = (v * 0.6f + click) * env;
+        } else if (type == 4) { // Heartbeat: Organic "Lub-Dub" (Low-pass Thump)
+            float lub = expf(-25.0f * fmodf(t, 1.2f));
+            float dub = (t > 0.15f) ? expf(-25.0f * (fmodf(t, 1.2f) - 0.15f)) : 0.0f;
+            v = sinf(2.0f * PI * 45.0f * t) * lub * 0.8f;
+            v += sinf(2.0f * PI * 40.0f * t) * dub * 0.6f;
+        } else if (type == 5) { // Grace: Ethereal Shimmer (Chorus of Bells)
+            float env = expf(-0.8f * t);
+            for(int k=0; k<6; k++) {
+                float f = 440.0f * powf(1.5f, (float)k); // Stacked fifths
+                v += (1.0f / (k+1)) * sinf(2.0f * PI * f * t + 2.0f * sinf(PI * t)) * env;
+            }
+            v *= 0.25f;
+        } else if (type == 6) { // Spirit/Cross: Plasma Surge
+            float env = expf(-2.5f * t) * (1.0f - expf(-20.0f * t));
+            float sweep = 80.0f + 400.0f * (1.0f - expf(-6.0f * t));
+            v = sinf(2.0f * PI * sweep * t + 4.0f * sinf(2.0f * PI * 10.0f * t)) * env * 0.5f;
+        } else if (type == 7) { // Pax: Freezing Glass (High Frequency Friction)
+            float env = expf(-2.0f * t);
+            v = sinf(2.0f * PI * 2200.0f * t) * env * 0.3f;
+            v += sinf(2.0f * PI * 2250.0f * t) * env * 0.2f; // Beating effect
+        } else if (type == 8) { // Claritas: Dimensional Tear (Bending Realtime)
+            float env = expf(-0.5f * t);
+            v = sinf(2.0f * PI * 110.0f * t + 8.0f * sinf(2.0f * PI * 0.2f * t)) * env * 0.4f;
+        } else if (type == 9) { // Canticle: Divine Choir (Formant Synthesis)
+            float env = sinf(PI * t / duration);
+            float base = 130.81f; // C3
+            float harmonics[] = {1.0f, 0.8f, 0.5f, 0.3f, 0.1f};
+            for(int k=0; k<5; k++) {
+                v += harmonics[k] * sinf(2.0f * PI * base * (k+1) * t + 0.1f * sinf(5.0f * PI * t));
+            }
+            v *= env * 0.2f;
+        } else if (type == 10) { // LevelUp: Resonant Victory (Golden Fanfare)
+            float env = expf(-1.0f * t);
+            float freqs[] = {523.25f, 659.25f, 783.99f, 1046.50f};
+            int idx = (int)Clamp(t * 5.0f, 0.0f, 3.0f);
+            v = sinf(2.0f * PI * freqs[idx] * t) * env * 0.5f;
+        } else if (type == 11) { // Redeemed: Soul Ascension (Rising Air)
+            float env = expf(-3.0f * t);
+            float sweep = 440.0f + 1200.0f * (t / duration);
+            v = sinf(2.0f * PI * sweep * t) * env * 0.4f;
+        } else if (type == 12) { // Blessing: Celestial Gear (Clockwork)
+            float env = expf(-5.0f * t);
+            v = sinf(2.0f * PI * 1760.0f * t) * expf(-20.0f * t); // Tock
+            v += sinf(2.0f * PI * 880.0f * t) * env * 0.3f;
+        } else if (type == 13) { // Dash: Sonic Snap (Compressed Air)
+            float env = expf(-25.0f * t);
+            v = sinf(2.0f * PI * 150.0f * (1.0f - t) * t) * env;
+        } else if (type == 14) { // Hit: Blunt Trauma (Organic Impact)
+            float env = expf(-30.0f * t);
+            v = sinf(2.0f * PI * 65.0f * t) * env * 0.8f;
+            v += ((float)GetRandomValue(-50, 50)/100.0f) * expf(-100.0f * t); // Bone crack
+        } else if (type >= 15 && type <= 19) { // Ambiences: Massive Subterranean Voids
+            float f = 30.0f + (type - 15) * 10.0f;
+            float lfo = 0.5f + 0.5f * sinf(2.0f * PI * 0.05f * t);
+            v = (sinf(2.0f * PI * f * t) + 0.4f * sinf(2.0f * PI * f * 2.01f * t)) * 0.2f * lfo;
+            v += 0.05f * sinf(2.0f * PI * 200.0f * t + 5.0f * sinf(0.1f * t)); // Airy drone
+        } else if (type == 20) { // AI: Whisperer (Vocal Fricatives)
+            v = sinf(2.0f * PI * 400.0f * t + 10.0f * sinf(2.0f * PI * 20.0f * t)) * expf(-5.0f * t) * 0.3f;
+        } else if (type == 21) { // AI: Accuser (Mechanical Click)
+            v = sinf(2.0f * PI * 1800.0f * t) * expf(-80.0f * t) * 0.8f;
+        } else if (type == 22) { // AI: Rager (Animalistic Growl)
+            v = sinf(2.0f * PI * 55.0f * t + 5.0f * sinf(2.0f * PI * 120.0f * t)) * expf(-4.0f * t) * 0.6f;
+        } else if (type == 23) { // AI: Sloth (Heavy Rock Slide)
+            v = sinf(2.0f * PI * 35.0f * t) * expf(-2.0f * t) * 0.7f;
+        } else if (type == 24) { // AI: Glutton (Liquid Viscosity)
+            v = sinf(2.0f * PI * 90.0f * t + 12.0f * sinf(2.0f * PI * 4.0f * t)) * expf(-3.0f * t);
+        } else if (type == 25) { // AI: Lust (Synthetic Heartbeat)
+            v = sinf(2.0f * PI * 1500.0f * t) * expf(-40.0f * t);
+        } else if (type == 26) { // AI: Boss (Seismic Shock)
+            v = sinf(2.0f * PI * 30.0f * t) * expf(-2.0f * t) * 0.9f;
+        } else if (type == 27) { // AI: Spawn (Magical Materialization)
+            v = sinf(2.0f * PI * (880.0f + 440.0f * t) * t) * expf(-15.0f * t) * 0.5f;
+        } else if (type == 28) { // AI: Projectile Ground Impact
+            v = sinf(2.0f * PI * 140.0f * t) * expf(-40.0f * t) * 0.6f;
+        } else if (type == 29) { // Holy Rebuke: Celestial Detonation
+            float env = expf(-3.0f * t);
+            float low = sinf(2.0f * PI * 40.0f * t) * env;
+            float mid = sinf(2.0f * PI * 160.0f * t + 5.0f * sinf(2.0f * PI * 10.0f * t)) * env * 0.5f;
+            float high = sinf(2.0f * PI * 1200.0f * t) * expf(-15.0f * t) * 0.4f;
+            v = low + mid + high;
+        }
+
+        data[i] = (short)(Clamp(v, -1.0f, 1.0f) * 32000.0f);
+    }
+
+    Wave wave = { 0 };
+    wave.frameCount = durationFrames;
+    wave.sampleRate = sampleRate;
+    wave.sampleSize = 16;
+    wave.channels = 1;
+    wave.data = data;
+    Sound sound = LoadSoundFromWave(wave);
+    UnloadWave(wave);
+    return sound;
+}
 
 // ======================================================================
 // Enums & Structs
@@ -396,6 +561,14 @@ struct Guardian {
     float shieldTimer = 0.0f; 
     float wordCooldown = 0.0f; 
     float claritasTimer = 0.0f; 
+    
+    // Bulwark Overhaul (F30)
+    bool canGuardCounter = false;
+    float guardCounterWindow = 0.0f;
+    bool isRebuking = false;
+    float rebukeTimer = 0.0f;
+    float rebukeDuration = 0.5f;
+    float rebukeRadius = 25.0f;
     
     // Movement
     bool isDashing = false;
@@ -614,6 +787,8 @@ Mesh GenRadiantFloorMesh() {
 }
 
 void InitLumenFidei() {
+    InitAudioDevice();
+    
     camera.fovy = 55.0f;
     camera.projection = CAMERA_PERSPECTIVE;
     camera.up = {0,1,0};
@@ -622,12 +797,61 @@ void InitLumenFidei() {
     
     // Graphics Init (Sacred Geometry)
     sphereMesh = GenMeshSphere(1.0f, 32, 32); 
-    cylinderMesh = GenMeshTorus(0.8f, 1.2f, 32, 32); // Halo Rings
-    cubeMesh = GenMeshKnot(0.8f, 1.2f, 128, 32); // Complex Vice Core
+    cylinderMesh = GenMeshCylinder(1.0f, 1.0f, 16);
+    torusMesh = GenMeshTorus(0.5f, 1.2f, 32, 32);
+    knotMesh = GenMeshKnot(0.6f, 1.4f, 128, 32);
+    polyMesh = GenMeshPoly(6, 1.2f); // Hex shards
+    cubeMesh = GenMeshCube(1.0f, 1.0f, 1.0f);
     floorLinesMesh = GenRadiantFloorMesh();
-    polyMesh = GenMeshPoly(6, 1.5f); // Hexagonal prisms
     
-    // Load Shaders
+    // Audio Init (Procedural Synthesis)
+    sndSwingHumility = GenerateDivineSound(0);
+    sndSwingMercy = GenerateDivineSound(1);
+    sndSwingCharity = GenerateDivineSound(2);
+    sndParry = GenerateDivineSound(3);
+    sndHeartbeat = GenerateDivineSound(4);
+    sndGrace = GenerateDivineSound(5);
+    sndSpirit = GenerateDivineSound(6);
+    sndPax = GenerateDivineSound(7);
+    sndClaritas = GenerateDivineSound(8);
+    sndCanticle = GenerateDivineSound(9);
+    sndLevelUp = GenerateDivineSound(10);
+    sndViceRedeemed = GenerateDivineSound(11);
+    sndBlessing = GenerateDivineSound(12);
+    sndDash = GenerateDivineSound(13);
+    sndHit = GenerateDivineSound(14);
+
+    sndAmbienceI = GenerateDivineSound(15);
+    sndAmbienceII = GenerateDivineSound(16);
+    sndAmbienceIII = GenerateDivineSound(17);
+    sndAmbienceIV = GenerateDivineSound(18);
+    sndAmbienceV = GenerateDivineSound(19);
+
+    sndViceWhisper = GenerateDivineSound(20);
+    sndViceAccuse = GenerateDivineSound(21);
+    sndViceRage = GenerateDivineSound(22);
+    sndViceSloth = GenerateDivineSound(23);
+    sndViceGlutton = GenerateDivineSound(24);
+    sndViceLust = GenerateDivineSound(25);
+    sndViceBoss = GenerateDivineSound(26);
+    sndTemptationSpawn = GenerateDivineSound(27);
+    sndTemptationHit = GenerateDivineSound(28);
+    sndRebuke = GenerateDivineSound(29);
+
+    // Initialize Alias Pools for high-frequency sounds
+    for (int i = 0; i < 40; i++) {
+        Sound src = { 0 };
+        if (i == 27) src = sndTemptationSpawn;
+        else if (i == 28) src = sndTemptationHit;
+        else if (i == 14) src = sndHit;
+        else if (i == 3) src = sndParry;
+        else continue;
+
+        for (int j = 0; j < MAX_ALIASES; j++) {
+            sndAliases[i][j] = LoadSoundAlias(src);
+        }
+    }
+    
     Shader sh = LoadShaderFromMemory(vsCode, fsCode);
     divineMat = LoadMaterialDefault();
     divineMat.shader = sh;
@@ -660,15 +884,22 @@ void StartVigil(bool fullReset) {
     if (vigilCount % 5 == 0) {
         Vice v;
         v.type = CARDINAL_SIN;
-        // Significant health boost for Multi-Phase encounter
-        v.maxCorruption = 8000.0f + (vigilCount - 5) * 4000.0f;
+        // The Absolute (Final Trial) or Regular Cardinal Sins
+        if (vigilCount == 25) {
+            v.maxCorruption = 25000.0f; // The ultimate challenge
+            v.scale = 12.0f;
+            v.moveSpeed = 8.0f;
+        } else {
+            v.maxCorruption = 8000.0f + (vigilCount - 5) * 4000.0f;
+            v.scale = 6.5f + (vigilCount * 0.25f);
+            v.moveSpeed = 6.5f;
+        }
         v.corruption.store(v.maxCorruption);
-        v.moveSpeed = 6.5f; // Now they can move!
-        v.scale = 6.5f + (vigilCount * 0.25f);
         v.state = VICE_IDLE;
-        v.stateTimer = 0.8f; // Faster start
+        v.stateTimer = 0.8f;
         v.attackTimer = 0.0f;
-        v.pos = {0, 0, -50};
+        v.pos = {0, 0, -60};
+        v.redeemed.store(false);
         vices.push_back(std::move(v));
     } else {
         int count = 6 + (vigilCount * 2);
@@ -690,22 +921,24 @@ void StartVigil(bool fullReset) {
             v.formationAngle = ((float)i / count) * 2.0f * PI; 
             v.attackTimer = GetRandomValue(5, 30) / 10.0f;
             
-            float ang = GetRandomValue(0, 360) * DEG2RAD;
-            float dist = GetRandomValue(50, 110); 
+            float ang = (float)GetRandomValue(0, 360) * DEG2RAD;
+            float dist = (float)GetRandomValue(60, 115); 
             v.pos = {cosf(ang) * dist, 0, sinf(ang) * dist};
+            v.redeemed.store(false);
             vices.push_back(std::move(v));
         }
     }
+    // Final Sanity Count
     initialViceCount = (int)vices.size();
 
     // Mansion Transition Detection
     if (vigilCount == 1 || vigilCount == 6 || vigilCount == 11 || vigilCount == 16 || vigilCount == 21) {
         mansionTitleTimer = 4.0f;
-        if (vigilCount == 1) currentMansionName = "Mansion I: The Courtyard of Humility";
-        else if (vigilCount == 6) currentMansionName = "Mansion II: The Desert of Temptation";
-        else if (vigilCount == 11) currentMansionName = "Mansion III: The Sea of Peace";
-        else if (vigilCount == 16) currentMansionName = "Mansion IV: The Inner Sanctum";
-        else currentMansionName = "Mansion V: The Void Core";
+        if (vigilCount == 1) { currentMansionName = "Mansion I: The Courtyard of Humility"; StopSound(sndAmbienceV); PlaySound(sndAmbienceI); }
+        else if (vigilCount == 6) { currentMansionName = "Mansion II: The Desert of Temptation"; StopSound(sndAmbienceI); PlaySound(sndAmbienceII); }
+        else if (vigilCount == 11) { currentMansionName = "Mansion III: The Sea of Peace"; StopSound(sndAmbienceII); PlaySound(sndAmbienceIII); }
+        else if (vigilCount == 16) { currentMansionName = "Mansion IV: The Inner Sanctum"; StopSound(sndAmbienceIII); PlaySound(sndAmbienceIV); }
+        else { currentMansionName = "Mansion V: The Void Core"; StopSound(sndAmbienceIV); PlaySound(sndAmbienceV); }
     }
 }
 
@@ -725,6 +958,7 @@ void UpdateGuardian(float dt) {
         guardian.merit -= CLARITAS_COST;
         guardian.claritasTimer = CLARITAS_DURATION;
         SpawnMotes(guardian.pos, COL_SPIRIT, 50, 12.0f);
+        PlaySound(sndClaritas);
     }
 
     // Regeneration (Atomic Spirit)
@@ -746,28 +980,34 @@ void UpdateGuardian(float dt) {
     // Input: Divine Inspirations (Spend Spirit Points)
     if (guardian.spiritPoints > 0) {
         if (IsKeyPressed(KEY_ONE)) {
-            guardian.parryWindow += 0.04f; guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            guardian.parryWindow += 0.04f; guardian.spiritPoints--; guardian.haloScale += 0.2f;
             SpawnMotes(guardian.pos, WHITE, 30, 12.0f);
+            PlaySound(sndBlessing);
         } else if (IsKeyPressed(KEY_TWO)) {
-            guardian.truthSpeedMult += 0.40f; guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            guardian.truthSpeedMult += 0.40f; guardian.spiritPoints--; guardian.haloScale += 0.2f;
             SpawnMotes(guardian.pos, GOLD, 30, 12.0f);
+            PlaySound(sndBlessing);
         } else if (IsKeyPressed(KEY_THREE)) {
             guardian.maxGrace += 50.0f;
             float g = guardian.grace.load();
             guardian.grace.store(g + 50.0f);
-            guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            guardian.spiritPoints--; guardian.haloScale += 0.2f;
             SpawnMotes(guardian.pos, PINK, 30, 12.0f);
+            PlaySound(sndBlessing);
         } else if (IsKeyPressed(KEY_FOUR)) {
             guardian.accelMult += 0.20f;
-            guardian.dashCostMult *= 0.85f; 
-            guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            guardian.dashCostMult *= 0.80f; // -20% cost
+            guardian.spiritPoints--; guardian.haloScale += 0.2f;
             SpawnMotes(guardian.pos, SKYBLUE, 30, 12.0f);
+            PlaySound(sndBlessing);
         } else if (IsKeyPressed(KEY_FIVE)) {
-            guardian.meritMult += 0.25f; guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            guardian.meritMult += 0.25f; guardian.spiritPoints--; guardian.haloScale += 0.2f;
             SpawnMotes(guardian.pos, GOLD, 30, 12.0f, MOTE_DOVE);
+            PlaySound(sndBlessing);
         } else if (IsKeyPressed(KEY_SIX)) {
-            guardian.fervorRegenMult += 0.35f; guardian.spiritPoints--; guardian.haloScale += 0.12f;
+            guardian.fervorRegenMult += 0.30f; guardian.spiritPoints--; guardian.haloScale += 0.2f;
             SpawnMotes(guardian.pos, ORANGE, 30, 12.0f);
+            PlaySound(sndBlessing);
         }
     }
 
@@ -784,6 +1024,11 @@ void UpdateGuardian(float dt) {
         // Advance Combo Step
         guardian.comboStep++;
         if (guardian.comboStep > 3) guardian.comboStep = 1;
+        
+        // Play Swing Sound
+        if (guardian.comboStep == 1) PlaySound(sndSwingHumility);
+        else if (guardian.comboStep == 2) PlaySound(sndSwingMercy);
+        else if (guardian.comboStep == 3) PlaySound(sndSwingCharity);
         
         // Define Step Properties (Faster & Snappier)
         if (guardian.comboStep == 1) { // Humility
@@ -832,6 +1077,7 @@ void UpdateGuardian(float dt) {
         guardian.crossTimer = guardian.crossDuration;
         guardian.spirit.store(guardian.spirit.load() - 40.0f);
         SpawnMotes(guardian.pos, WHITE, 40, 10.0f);
+        PlaySound(sndSpirit);
     }
 
     if (guardian.isCrossing) {
@@ -840,11 +1086,12 @@ void UpdateGuardian(float dt) {
     }
 
     // Canticle of Joy (F)
-    if (IsKeyPressed(KEY_F) && guardian.fervor >= guardian.maxFervor) {
-        guardian.fervor = 0;
+    if (IsKeyPressed(KEY_F) && guardian.fervor.load() >= (int)guardian.maxFervor) {
+        guardian.fervor.store(0);
         screenShake = 1.0f;
         SpawnMotes(guardian.pos, WHITE, 40, 15.0f, MOTE_DOVE); // Seven Gifts (Doves)
         SpawnMotes(guardian.pos, PINK, 100, 30.0f); // Pink for Love
+        PlaySound(sndCanticle);
         for (auto& v : vices) {
             v.corruption.store(v.corruption - 500.0f);
             if (v.corruption <= 0 && !v.redeemed) {
@@ -854,8 +1101,49 @@ void UpdateGuardian(float dt) {
         }
     }
 
+    // Bulwark Overhaul: Guard Counter & Rebuke (F30)
+    guardian.guardCounterWindow = std::max(0.0f, guardian.guardCounterWindow - dt);
+    if (guardian.guardCounterWindow <= 0.0f) guardian.canGuardCounter = false;
+
+    if (guardian.isRebuking) {
+        guardian.rebukeTimer -= dt;
+        if (guardian.rebukeTimer <= 0.0f) {
+            guardian.isRebuking = false;
+        }
+        // Continuous impact during the detonation frame (visual/logic handled in UpdateVices/Temptations)
+    }
+
+    if (guardian.canGuardCounter && IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !guardian.isRebuking) {
+        guardian.isRebuking = true;
+        guardian.rebukeTimer = guardian.rebukeDuration;
+        guardian.canGuardCounter = false;
+        guardian.guardCounterWindow = 0.0f;
+        screenShake = 0.6f;
+        PlaySound(sndRebuke);
+        SpawnMotes(guardian.pos, GOLD, 60, 25.0f, MOTE_SPARK);
+        
+        // Immediate Holy Rebuke Logic: Repel and Damage nearby
+        for (auto& v : vices) {
+            float dist = Vector3Distance(v.pos, guardian.pos);
+            if (dist < guardian.rebukeRadius) {
+                v.corruption.store(v.corruption - 150.0f);
+                Vector3 repel = Vector3Normalize(Vector3Subtract(v.pos, guardian.pos));
+                v.pos = Vector3Add(v.pos, Vector3Scale(repel, 15.0f));
+                v.stunned = true;
+                v.stunTimer = 1.5f;
+            }
+        }
+        for (auto& t : temptations) {
+            if (!t.isTruth && Vector3Distance(t.pos, guardian.pos) < guardian.rebukeRadius) {
+                t.isTruth = true;
+                t.color = COL_TRUTH;
+                t.vel = Vector3Scale(Vector3Normalize(Vector3Subtract(t.pos, guardian.pos)), 40.0f);
+            }
+        }
+    }
+
     // Input: Shield (Right Click)
-    if (IsMouseButtonDown(MOUSE_RIGHT_BUTTON) && guardian.spirit.load() > 0 && !guardian.isSwinging) {
+    if (IsMouseButtonDown(MOUSE_RIGHT_BUTTON) && guardian.spirit.load() > 0 && !guardian.isSwinging && !guardian.isRebuking) {
         if (!guardian.isShielding) {
             guardian.shieldTimer = 0.0f;
         }
@@ -874,6 +1162,7 @@ void UpdateGuardian(float dt) {
         
         SpawnMotes(guardian.pos, COL_SPIRIT, 40, 15.0f);
         screenShake = 0.25f;
+        PlaySound(sndPax);
         
         // Freeze nearby temptations
         for (auto& t : temptations) {
@@ -901,7 +1190,7 @@ void UpdateGuardian(float dt) {
         
         // Restore fervor (int)
         static float fervorAccumulator = 0.0f;
-        fervorAccumulator += 50.0f * dt;
+        fervorAccumulator += 50.0f * dt * guardian.fervorRegenMult;
         if (fervorAccumulator >= 1.0f) {
             int toAdd = (int)fervorAccumulator;
             guardian.fervor.fetch_add(toAdd);
@@ -978,6 +1267,7 @@ void UpdateGuardian(float dt) {
             guardian.spirit.store(guardian.spirit.load() - currentDashCost);
             guardian.vel = Vector3Add(guardian.vel, Vector3Scale(inputDir, DASH_IMPULSE));
             screenShake = 0.2f;
+            PlaySound(sndDash);
         }
     }
     
@@ -1071,6 +1361,10 @@ void UpdateVices(float dt) {
     if (numThreads == 0) numThreads = 4;
     size_t chunk = (num + numThreads - 1) / numThreads;
 
+    // Snapshot positions to avoid data races during separation checks
+    std::vector<Vector3> currentPositions(num);
+    for (size_t i = 0; i < num; ++i) currentPositions[i] = vices[i].pos;
+
     // Result buffers to avoid mutex contention
     std::vector<std::vector<Temptation>> threadTemps(numThreads);
     std::vector<std::vector<LightMote>> threadMotes(numThreads);
@@ -1081,11 +1375,15 @@ void UpdateVices(float dt) {
         size_t endd = std::min(start + chunk, num);
         if (start >= endd) continue;
 
-        futures.push_back(g_pool->enqueue([start, endd, dt, t, &threadTemps, &threadMotes]() {
+        futures.push_back(g_pool->enqueue([start, endd, dt, t, &threadTemps, &threadMotes, &currentPositions, num]() {
+            // Local RNG for thread-safe random logic
+            std::mt19937 rng(1337 + t);
+            std::uniform_int_distribution<int> dist01(0, 1);
+
             for (size_t i = start; i < endd; ++i) {
                 Vice& v = vices[i];
                 if (v.redeemed) {
-                    v.pos.y += 5.0f * dt; // Ascend
+                    if (v.pos.y < 30.0f) v.pos.y += 5.0f * dt; // Controlled ascent
                     continue;
                 }
                 
@@ -1098,6 +1396,7 @@ void UpdateVices(float dt) {
                         bool alreadyRedeemed = v.redeemed.exchange(true);
                         if (!alreadyRedeemed) {
                             guardian.merit.fetch_add(100);
+                            PlaySound(sndViceRedeemed);
                             SpawnMotes(v.pos, GOLD, 50, 10.0f, MOTE_SPARK, &threadMotes[t]);
                         }
                     }
@@ -1108,12 +1407,13 @@ void UpdateVices(float dt) {
                         if (dist < guardian.swingRange + 2.0f) {
                             Vector3 toVice = Vector3Subtract(v.pos, guardian.pos);
                             float angleToVice = atan2f(toVice.x, toVice.z);
-                            float angleDiff = fabs(angleToVice - guardian.facingAngle);
+                            float angleDiff = angleToVice - guardian.facingAngle;
                             while (angleDiff > PI) angleDiff -= 2*PI;
                             while (angleDiff < -PI) angleDiff += 2*PI;
 
                             if (fabs(angleDiff) < guardian.swingArc / 2.0f) {
                                 v.corruption.store(v.corruption - 50.0f * dt * 10.0f); // Fast conversion on hit
+                                guardian.fervor.fetch_add((int)(2 * guardian.fervorRegenMult)); // F24: Fervor from hits
                                 SpawnMotes(v.pos, COL_GRACE, 2, 5.0f, MOTE_SPARK, &threadMotes[t]);
                             }
                         }
@@ -1122,43 +1422,55 @@ void UpdateVices(float dt) {
                     // Chase behavior (Tactical & Coordinated)
                     Vector3 toPlayer = Vector3Subtract(guardian.pos, v.pos);
                     toPlayer.y = 0;
-                    float dist = Vector3Length(toPlayer);
-                    Vector3 dir = Vector3Normalize(toPlayer);
+                    float distP = Vector3Length(toPlayer);
+                    Vector3 dirP = (distP > 0.001f) ? Vector3Scale(toPlayer, 1.0f/distP) : (Vector3){0,0,1};
                     
                     // 1. Coordinated Formation Target
                     v.formationAngle += 0.2f * dt; // Slow orbit
                     float targetDist = (v.type == WHISPERER) ? 30.0f : (v.type == ACCUSER) ? 22.0f : 12.0f;
                     Vector3 formationOffset = { cosf(v.formationAngle) * targetDist, 0, sinf(v.formationAngle) * targetDist };
                     Vector3 targetPos = Vector3Add(guardian.pos, formationOffset);
-                    Vector3 formationDir = Vector3Normalize(Vector3Subtract(targetPos, v.pos));
+                    Vector3 toTarget = Vector3Subtract(targetPos, v.pos);
+                    float distT = Vector3Length(toTarget);
+                    Vector3 formationDir = (distT > 0.001f) ? Vector3Scale(toTarget, 1.0f/distT) : (Vector3){0,0,0};
 
-                    // 2. Separation Force (Avoid Clumping)
+                    // 2. Separation Force (Avoid Clumping) - READ FROM SNAPSHOT
                     Vector3 separation = {0,0,0};
-                    for (const auto& other : vices) {
-                        if (&other == &v) continue;
-                        float d = Vector3Distance(v.pos, other.pos);
-                        if (d < 6.0f) {
-                            separation = Vector3Add(separation, Vector3Scale(Vector3Normalize(Vector3Subtract(v.pos, other.pos)), (6.0f - d) * 2.0f));
+                    for (size_t j = 0; j < num; ++j) {
+                        if (i == j) continue;
+                        float d = Vector3Distance(v.pos, currentPositions[j]);
+                        if (d < 6.0f && d > 0.001f) {
+                            Vector3 diff = Vector3Subtract(v.pos, currentPositions[j]);
+                            separation = Vector3Add(separation, Vector3Scale(Vector3Normalize(diff), (6.0f - d) * 2.0f));
                         }
                     }
 
                     // 3. Apply Combined Forces
                     float moveSpeedMult = (v.type == SLOTH) ? 0.5f : (v.type == LUST) ? 1.5f : 1.0f;
-                    Vector3 finalMoveDir = Vector3Normalize(Vector3Add(Vector3Scale(formationDir, 1.0f), Vector3Scale(separation, 1.5f)));
-                    v.pos = Vector3Add(v.pos, Vector3Scale(finalMoveDir, v.moveSpeed * moveSpeedMult * dt));
-
-                    // Unique Behaviors
-                    if (v.type == LUST && v.stateTimer <= 0) {
-                        v.stateTimer = 4.0f;
-                        SpawnMotes(v.pos, PINK, 10, 5.0f, MOTE_SPARK, &threadMotes[t]);
-                        float bAng = (float)GetRandomValue(0, 360) * DEG2RAD;
-                        v.pos = Vector3Add(v.pos, {cosf(bAng)*15, 0, sinf(bAng)*15});
+                    Vector3 combined = Vector3Add(Vector3Scale(formationDir, 1.0f), Vector3Scale(separation, 1.5f));
+                    if (Vector3Length(combined) > 0.001f) {
+                        Vector3 finalMoveDir = Vector3Normalize(combined);
+                        v.pos = Vector3Add(v.pos, Vector3Scale(finalMoveDir, v.moveSpeed * moveSpeedMult * dt));
                     }
 
-                    if (v.type == RAGER && dist < 18.0f && guardian.isSwinging) {
-                        // Elite Reflex Dodge (unchanged but faster)
-                        Vector3 dodge = {dir.z, 0, -dir.x};
-                        if (GetRandomValue(0, 1) == 0) dodge = Vector3Negate(dodge);
+                    // Boundary Clamp (Prevents flying off map)
+                    v.pos.x = Clamp(v.pos.x, -130.0f, 130.0f);
+                    v.pos.z = Clamp(v.pos.z, -130.0f, 130.0f);
+
+                    // Unique Behaviors
+                    if (v.type == LUST) {
+                        v.stateTimer -= dt;
+                        if (v.stateTimer <= 0) {
+                            v.stateTimer = 4.0f;
+                            SpawnMotes(v.pos, PINK, 10, 5.0f, MOTE_SPARK, &threadMotes[t]);
+                            float bAng = (float)(rng() % 360) * DEG2RAD;
+                            v.pos = Vector3Add(v.pos, {cosf(bAng)*15, 0, sinf(bAng)*15});
+                        }
+                    }
+
+                    if (v.type == RAGER && distP < 18.0f && guardian.isSwinging) {
+                        Vector3 dodge = {dirP.z, 0, -dirP.x};
+                        if (dist01(rng) == 0) dodge = Vector3Negate(dodge);
                         v.pos = Vector3Add(v.pos, Vector3Scale(dodge, v.moveSpeed * 6.0f * dt));
                         SpawnMotes(v.pos, currentViceCol, 1, 2.0f, MOTE_SPARK, &threadMotes[t]);
                     }
@@ -1169,182 +1481,142 @@ void UpdateVices(float dt) {
                         Vector3 spawnPos = Vector3Add(v.pos, {0, 2.0f, 0}); 
                         
                         if (v.type == CARDINAL_SIN) {
-                            // Boss logic handled separately below
+                            // Boss logic handled below
                         } else if (director.attackTokens > 0) {
-                            // Regular Enemy Attack (Consumes Token)
                             director.attackTokens--;
                             
                             if (v.type == WHISPERER) {
-                                // Sacred Geometry: Rose Curve (Floral Pattern)
-                                float k = 3.0f; // 3-petaled rose
-                                float ang = GetTime() * 4.0f;
-                                float r = cosf(k * ang);
+                                float k = 3.0f; float ang = GetTime() * 4.0f; float r = cosf(k * ang);
                                 Vector3 roseDir = { r * cosf(ang), 0, r * sinf(ang) };
                                 SpawnTemptation(spawnPos, Vector3Scale(roseDir, 22.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                PlaySoundPooled(27, 1.0f, 0.5f); PlaySound(sndViceWhisper);
                                 v.attackTimer = 0.15f; 
                             } else if (v.type == SLOTH) {
-                                // Sloth: Heavy Thorns
                                 Vector3 toP = Vector3Normalize(Vector3Subtract(guardian.pos, spawnPos));
                                 SpawnTemptation(spawnPos, Vector3Scale(toP, 10.0f), PURPLE, false, &threadTemps[t]);
+                                PlaySoundPooled(27, 0.7f, 0.5f); PlaySound(sndViceSloth);
                                 v.attackTimer = 3.5f;
                             } else if (v.type == GLUTTON) {
-                                // Glutton: Targeted Bursts
                                 Vector3 toP = Vector3Normalize(Vector3Subtract(guardian.pos, spawnPos));
                                 SpawnTemptation(spawnPos, Vector3Scale(toP, 14.0f), ORANGE, false, &threadTemps[t]);
+                                PlaySoundPooled(27, 0.85f, 0.5f); PlaySound(sndViceGlutton);
                                 v.attackTimer = 1.5f;
                             } else if (v.type == LUST) {
-                                // Lust: Rapid Flickering Doubts
+                                PlaySound(sndViceLust);
                                 for(int k=0; k<2; k++) {
-                                    Vector3 spread = Vector3RotateByAxisAngle(dir, {0,1,0}, (float)GetRandomValue(-10,10)*0.01f);
+                                    Vector3 spread = Vector3RotateByAxisAngle(dirP, {0,1,0}, (float)(rng() % 20 - 10)*0.01f);
                                     SpawnTemptation(spawnPos, Vector3Scale(spread, 30.0f), PINK, false, &threadTemps[t]);
+                                    PlaySoundPooled(27, 1.2f, 0.5f);
                                 }
                                 v.attackTimer = 0.8f;
                             } else if (v.type == ACCUSER) {
-                                // Sacred Geometry: Triquetra Spiral
+                                PlaySound(sndViceAccuse);
                                 float ang = GetTime() * 2.5f;
                                 for(int k=0; k<3; k++) {
                                     float a = ang + k * (2.0f * PI / 3.0f);
-                                    Vector3 triDir = { cosf(a), 0, sinf(a) };
-                                    SpawnTemptation(spawnPos, Vector3Scale(triDir, 18.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                    SpawnTemptation(spawnPos, Vector3Scale({cosf(a), 0, sinf(a)}, 18.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                    PlaySoundPooled(27, 1.1f, 0.5f);
                                 }
                                 v.attackTimer = 0.6f;
                             } else if (v.type == RAGER) {
-                                // Sonic Lunge (Impulse toward player)
-                                v.pos = Vector3Add(v.pos, Vector3Scale(dir, 15.0f)); 
-                                SpawnTemptation(spawnPos, Vector3Scale(dir, 32.0f), MAROON, false, &threadTemps[t]);
+                                PlaySound(sndViceRage);
+                                v.pos = Vector3Add(v.pos, Vector3Scale(dirP, 15.0f)); 
+                                SpawnTemptation(spawnPos, Vector3Scale(dirP, 32.0f), MAROON, false, &threadTemps[t]);
+                                PlaySoundPooled(27, 0.9f, 0.5f);
                                 v.attackTimer = 2.0f;
                             }
                         } else {
-                            v.attackTimer = 0.2f; // Wait for token
+                            v.attackTimer = 0.2f; 
                         }
                         
-                        // Boss Logic Block (Unchanged)
                         if (v.type == CARDINAL_SIN) {
                             v.stateTimer -= dt;
-                            Vector3 spawnPos = Vector3Add(v.pos, {0, 2.0f, 0});
-                            Vector3 toGuardian = Vector3Subtract(guardian.pos, v.pos);
-                            float distToG = Vector3Length(toGuardian);
-                            Vector3 dirToG = Vector3Normalize(toGuardian);
+                            Vector3 toG = Vector3Subtract(guardian.pos, v.pos);
+                            float dToG = Vector3Length(toG);
+                            Vector3 dirToG = (dToG > 0.001f) ? Vector3Scale(toG, 1.0f/dToG) : (Vector3){0,0,1};
 
                             if (v.state == VICE_IDLE) {
-                                // Relentless Pursuit
                                 v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, v.moveSpeed * dt));
-                                
                                 if (v.stateTimer <= 0) {
-                                    v.state = VICE_TELEGRAPH;
-                                    v.stateTimer = 0.65f; // Fast telegraph
-                                    // High chance for melee if player is close
-                                    if (distToG < 22.0f) v.patternIndex = (GetRandomValue(0, 10) < 7) ? 2 : GetRandomValue(0, 1);
-                                    else v.patternIndex = GetRandomValue(0, 1);
+                                    v.state = VICE_TELEGRAPH; v.stateTimer = 0.65f;
+                                    v.patternIndex = (dToG < 22.0f && dist01(rng)) ? 2 : dist01(rng);
                                 }
                             } else if (v.state == VICE_TELEGRAPH) {
-                                // Slow down but keep tracking
                                 v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, v.moveSpeed * 0.3f * dt));
                                 if (v.stateTimer <= 0) {
-                                    v.state = VICE_ATTACK;
-                                    v.stateTimer = (v.patternIndex == 2) ? 0.8f : 2.5f; 
+                                    v.state = VICE_ATTACK; v.stateTimer = (v.patternIndex == 2) ? 0.8f : 2.5f; 
                                 }
                             } else if (v.state == VICE_ATTACK) {
-                                // Move at half speed while attacking
                                 v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, v.moveSpeed * 0.5f * dt));
-                                
-                                v.attackTimer -= dt;
                                 if (v.attackTimer <= 0) {
+                                    PlaySound(sndViceBoss);
                                     if (vigilCount == 5) { // PRIDE
-                                        if (v.patternIndex == 0) { // Cross Burst
+                                        if (v.patternIndex == 0) { 
                                             for (int k = 0; k < 8; k++) {
-                                                float ang = k * PI/4 + GetTime() * 2.0f;
-                                                Vector3 crossDir = {cosf(ang), 0, sinf(ang)};
-                                                SpawnTemptation(spawnPos, Vector3Scale(crossDir, 22.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                                float a = k * PI/4 + GetTime() * 2.0f;
+                                                SpawnTemptation(spawnPos, Vector3Scale({cosf(a), 0, sinf(a)}, 22.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 0.9f, 0.5f);
                                             }
                                             v.attackTimer = 0.3f;
-                                        } else if (v.patternIndex == 1) { // Focused Doubts
+                                        } else if (v.patternIndex == 1) { 
                                             for(int k=-3; k<=3; k++) {
-                                                Vector3 spread = Vector3RotateByAxisAngle(dirToG, {0,1,0}, k * 0.12f);
-                                                SpawnTemptation(spawnPos, Vector3Scale(spread, 28.0f), MAROON, false, &threadTemps[t]);
+                                                Vector3 spr = Vector3RotateByAxisAngle(dirToG, {0,1,0}, k * 0.12f);
+                                                SpawnTemptation(spawnPos, Vector3Scale(spr, 28.0f), MAROON, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 1.0f, 0.5f);
                                             }
                                             v.attackTimer = 0.12f;
-                                        } else { // MELEE: Divine Rebuke
+                                        } else { 
                                             for(int k=0; k<48; k++) {
-                                                float ang = (float)k/48.0f * 2*PI;
-                                                Vector3 d = {cosf(ang), 0, sinf(ang)};
-                                                SpawnTemptation(spawnPos, Vector3Scale(d, 40.0f), GOLD, false, &threadTemps[t]);
+                                                float a = (float)k/48.0f * PI * 2.0f;
+                                                SpawnTemptation(spawnPos, Vector3Scale({cosf(a), 0, sinf(a)}, 40.0f), GOLD, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 0.6f, 0.5f);
                                             }
-                                            v.attackTimer = 0.8f;
-                                            screenShake = 0.5f;
+                                            v.attackTimer = 0.8f; screenShake = 0.5f;
                                         }
                                     } else if (vigilCount == 10) { // GREED
-                                        if (v.patternIndex == 0) { // Hyper Rain
+                                        if (v.patternIndex == 0) { 
                                             for(int k=0; k<25; k++) {
-                                                Vector3 rPos = { guardian.pos.x + GetRandomValue(-40,40), 50.0f, guardian.pos.z + GetRandomValue(-40,40) };
+                                                Vector3 rPos = { guardian.pos.x + (float)(rng()%80-40), 50.0f, guardian.pos.z + (float)(rng()%80-40) };
                                                 SpawnTemptation(rPos, {0,-35,0}, GOLD, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 1.2f, 0.5f);
                                             }
                                             v.attackTimer = 0.06f;
-                                        } else if (v.patternIndex == 1) { // Spiral Coin
+                                        } else if (v.patternIndex == 1) { 
                                             for(int k=0; k<4; k++) {
                                                 float a = GetTime() * 10.0f + k * PI/2;
                                                 SpawnTemptation(spawnPos, {cosf(a)*20, 0, sinf(a)*20}, GOLD, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 1.1f, 0.5f);
                                             }
                                             v.attackTimer = 0.1f;
-                                        } else { // MELEE: Avarice Storm
+                                        } else { 
                                             for(int k=0; k<15; k++) {
-                                                Vector3 offset = {(float)GetRandomValue(-20,20), 0, (float)GetRandomValue(-20,20)};
-                                                SpawnTemptation(Vector3Add(v.pos, offset), {0, 5, 0}, GOLD, false, &threadTemps[t]);
+                                                Vector3 off = {(float)(rng()%40-20), 0, (float)(rng()%40-20)};
+                                                SpawnTemptation(Vector3Add(v.pos, off), {0, 5, 0}, GOLD, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 0.7f, 0.5f);
                                             }
                                             v.attackTimer = 0.05f;
                                         }
-                                    } else if (vigilCount == 15) { // ENVY
-                                        if (v.patternIndex == 0) { // Converging Ring
-                                            float r = 45.0f;
-                                            for(int k=0; k<32; k++) {
-                                                float a = (float)k/32.0f * 2*PI;
-                                                Vector3 p = Vector3Add(guardian.pos, {cosf(a)*r, 2.0f, sinf(a)*r});
-                                                SpawnTemptation(p, Vector3Scale(Vector3Normalize(Vector3Subtract(guardian.pos, p)), 18.0f), GREEN, false, &threadTemps[t]);
+                                    } else if (vigilCount == 25) { // THE ABSOLUTE
+                                        float hpP = v.corruption.load() / v.maxCorruption;
+                                        if (hpP > 0.5f) {
+                                            for (int k = 0; k < 6; k++) {
+                                                float a = k * PI/3 + GetTime() * 3.0f;
+                                                SpawnTemptation(spawnPos, Vector3Scale({cosf(a), 0, sinf(a)}, 25.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 0.9f, 0.5f);
                                             }
-                                            v.attackTimer = 2.0f;
-                                        } else if (v.patternIndex == 1) { // Mimic Strike
-                                            SpawnTemptation(spawnPos, Vector3Scale(dirToG, 55.0f), GREEN, false, &threadTemps[t]);
-                                            v.attackTimer = 0.04f;
-                                        } else { // MELEE: Mirror Blast
-                                            for(int k=0; k<60; k++) {
-                                                float a = (float)k/60.0f * 2*PI;
-                                                SpawnTemptation(spawnPos, Vector3Scale({cosf(a), 0, sinf(a)}, 35.0f), GREEN, false, &threadTemps[t]);
+                                        } else {
+                                            for(int k=0; k<12; k++) {
+                                                float a = (float)k/12.0f * PI * 2.0f + GetTime() * 5.0f;
+                                                SpawnTemptation(spawnPos, Vector3Scale({cosf(a), 0, sinf(a)}, 30.0f), WHITE, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 1.2f, 0.5f);
                                             }
-                                            v.attackTimer = 0.8f;
                                         }
-                                    } else { // WRATH
-                                        if (v.patternIndex == 0) { // Sunfire Beam
-                                            for(int k=-5; k<=5; k++) {
-                                                Vector3 s = Vector3RotateByAxisAngle(dirToG, {0,1,0}, k * 0.08f + sinf(GetTime()*15)*0.4f);
-                                                SpawnTemptation(spawnPos, Vector3Scale(s, 35.0f), RED, false, &threadTemps[t]);
-                                            }
-                                            v.attackTimer = 0.03f;
-                                        } else if (v.patternIndex == 1) { // Chaos Nova
-                                            for(int k=0; k<40; k++) {
-                                                float a = (float)k/40.0f * 2*PI + GetTime();
-                                                SpawnTemptation(spawnPos, Vector3Scale({cosf(a), 0, sinf(a)}, 30.0f), MAROON, false, &threadTemps[t]);
-                                            }
-                                            v.attackTimer = 0.5f;
-                                        } else { // MELEE: Blood Lunge
-                                            v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, 25.0f * dt * 60.0f)); // Super fast lunge
-                                            for(int k=0; k<60; k++) {
-                                                float a = (float)k/60.0f * 2*PI;
-                                                SpawnTemptation(v.pos, Vector3Scale({cosf(a), 0, sinf(a)}, 20.0f), RED, false, &threadTemps[t]);
-                                            }
-                                            v.attackTimer = 0.8f;
-                                            screenShake = 0.7f;
-                                        }
+                                        v.attackTimer = 0.1f;
                                     }
                                 }
-                                if (v.stateTimer <= 0) {
-                                    v.state = VICE_RECOVER;
-                                    v.stateTimer = 0.85f; // Extremely short recovery
-                                }
+                                if (v.stateTimer <= 0) { v.state = VICE_RECOVER; v.stateTimer = 0.85f; }
                             } else if (v.state == VICE_RECOVER) {
-                                if (v.stateTimer <= 0) {
-                                    v.state = VICE_IDLE;
-                                    v.stateTimer = 0.5f; // Ready to chase again almost immediately
-                                }
+                                if (v.stateTimer <= 0) { v.state = VICE_IDLE; v.stateTimer = 0.5f; }
                             }
                         }
                     }
@@ -1354,23 +1626,20 @@ void UpdateVices(float dt) {
     }
     for (auto& fut : futures) fut.wait();
 
-    // Merge results back to main thread
     for (int t = 0; t < numThreads; t++) {
-        if (!threadTemps[t].empty()) {
-            temptations.insert(temptations.end(), threadTemps[t].begin(), threadTemps[t].end());
-        }
-        if (!threadMotes[t].empty()) {
-            motes.insert(motes.end(), threadMotes[t].begin(), threadMotes[t].end());
+        if (!threadTemps[t].empty()) temptations.insert(temptations.end(), threadTemps[t].begin(), threadTemps[t].end());
+        if (!threadMotes[t].empty()) motes.insert(motes.end(), threadMotes[t].begin(), threadMotes[t].end());
+    }
+    
+    for (auto& v : vices) {
+        if (v.corruption.load() <= 0 && !v.redeemed) {
+            v.redeemed.store(true); guardian.merit.fetch_add(100);
         }
     }
     
-    // Clean up redeemed souls
     for (auto it = vices.begin(); it != vices.end();) {
-        if (it->redeemed && it->pos.y > 20.0f) {
-            it = vices.erase(it);
-        } else {
-            ++it;
-        }
+        if (it->redeemed && it->pos.y >= 30.0f) it = vices.erase(it);
+        else ++it;
     }
 }
 
@@ -1410,6 +1679,7 @@ void UpdateTemptations(float dt) {
                 // Ground Collision (Splash)
                 if (temp.pos.y <= 0.0f) {
                     temp.life = 0;
+                    PlaySoundPooled(28, 1.0f, 0.5f);
                     SpawnMotes(temp.pos, (temp.isTruth ? WHITE : temp.color), 4, 5.0f, MOTE_SPARK, &threadMotes[t]);
                     continue;
                 }
@@ -1449,6 +1719,7 @@ void UpdateTemptations(float dt) {
                                 if (!alreadyRedeemed) {
                                     guardian.merit.fetch_add((int)(100 * guardian.meritMult));
                                     SpawnMotes(v.pos, GOLD, 50, 10.0f, MOTE_SPARK, &threadMotes[t]);
+                                    PlaySound(sndViceRedeemed);
                                     
                                     if (GetRandomValue(0, 100) < 35) {
                                         LoveHeart h;
@@ -1520,28 +1791,56 @@ void UpdateTemptations(float dt) {
                         }
                     }
 
-                    if (dist < 3.0f) {
+                    if (dist < 4.5f) { // Increased distance for Bulwark
                         Vector3 toBullet = Vector3Subtract(temp.pos, guardian.pos);
                         float angleToBullet = atan2f(toBullet.x, toBullet.z);
-                        float angleDiff = fabs(angleToBullet - guardian.facingAngle);
+                        float angleDiff = angleToBullet - guardian.facingAngle;
                         while (angleDiff > PI) angleDiff -= 2*PI;
                         while (angleDiff < -PI) angleDiff += 2*PI;
+                        angleDiff = fabs(angleDiff);
                         
-                        bool blocked = guardian.isShielding && (fabs(angleDiff) < SHIELD_ARC / 2.0f);
+                        bool blocked = guardian.isShielding && (angleDiff < SHIELD_ARC / 2.0f);
                         
                         if (blocked) {
                             bool perfect = guardian.shieldTimer < guardian.parryWindow;
-                            temp.vel = Vector3Scale(Vector3Normalize(Vector3Negate(temp.vel)), Vector3Length(temp.vel) * 1.5f * guardian.truthSpeedMult);
+                            guardian.canGuardCounter = true;
+                            guardian.guardCounterWindow = 0.75f;
+
                             temp.isTruth = true;
                             temp.color = COL_TRUTH;
-                            temp.life = 5.0f;
-                            SpawnMotes(temp.pos, COL_GRACE, 10, 10.0f, MOTE_SPARK, &threadMotes[t]);
+                            temp.life = 6.0f;
+                            
                             if (perfect) {
-                                guardian.fervor.fetch_add((int)(5 * guardian.fervorRegenMult));
+                                // Perfect Parry: Homing Greater Truth
+                                guardian.fervor.fetch_add((int)(15 * guardian.fervorRegenMult));
+                                PlaySound(sndParry);
+                                hitStop = 0.1f; // Visual impact
+                                
+                                // Find closest target
+                                Vice* closest = nullptr;
+                                float minDist = 9999.0f;
+                                for(auto& v : vices) {
+                                    if(!v.redeemed) {
+                                        float d = Vector3Distance(v.pos, temp.pos);
+                                        if(d < minDist) { minDist = d; closest = &v; }
+                                    }
+                                }
+                                if(closest) {
+                                    Vector3 toV = Vector3Normalize(Vector3Subtract(closest->pos, temp.pos));
+                                    temp.vel = Vector3Scale(toV, 55.0f * guardian.truthSpeedMult);
+                                } else {
+                                    temp.vel = Vector3Scale(Vector3Normalize(Vector3Negate(temp.vel)), 45.0f * guardian.truthSpeedMult);
+                                }
+                                SpawnMotes(temp.pos, GOLD, 20, 15.0f, MOTE_SPARK, &threadMotes[t]);
+                            } else {
+                                // Standard Block
+                                temp.vel = Vector3Scale(Vector3Normalize(Vector3Negate(temp.vel)), Vector3Length(temp.vel) * 1.5f * guardian.truthSpeedMult);
+                                SpawnMotes(temp.pos, COL_GRACE, 10, 10.0f, MOTE_SPARK, &threadMotes[t]);
                             }
                         } else if (guardian.hitStun <= 0.0f && !guardian.isDashing) {
                             // HIT handled on main thread or via atomic
                             temp.life = 0;
+                            PlaySound(sndHit);
                             if (!godMode) {
                                 float currentG = guardian.grace.load();
                                 while (!guardian.grace.compare_exchange_weak(currentG, currentG - 15.0f));
@@ -1727,6 +2026,7 @@ void UpdateFrame(float dt) {
         guardian.nextLevelJoy += 1000 + (guardian.level * 150); // Progressive scaling
         SpawnMotes(guardian.pos, GOLD, 60, 12.0f, MOTE_DOVE);
         screenShake = 0.3f;
+        PlaySound(sndLevelUp);
     }
 
     // Update Divine Love
@@ -1745,6 +2045,7 @@ void UpdateFrame(float dt) {
             float g = guardian.grace.load();
             if (g < guardian.maxGrace) guardian.grace.store(std::min(g + 25.0f, guardian.maxGrace));
             SpawnMotes(it->pos, PINK, 20, 10.0f, MOTE_SPARK);
+            PlaySound(sndGrace);
             it = loveHearts.erase(it);
         } else if (it->life <= 0) {
             it = loveHearts.erase(it);
@@ -1766,6 +2067,7 @@ void UpdateFrame(float dt) {
             
             SpawnMotes(it->pos, GOLD, 40, 15.0f, MOTE_SPARK);
             mansionTitleTimer = 3.0f; // Brief notification pulse
+            PlaySound(sndBlessing);
             it = blessingItems.erase(it);
         } else if (it->life <= 0) {
             it = blessingItems.erase(it);
@@ -1804,6 +2106,16 @@ void UpdateFrame(float dt) {
     
     // Sequential Cleanup
     motes.erase(std::remove_if(motes.begin(), motes.end(), [](const LightMote& m){ return m.life <= 0; }), motes.end());
+
+    // Sacred Heartbeat Audio
+    static float heartbeatTimer = 0.0f;
+    float gracePct = (float)guardian.grace.load() / guardian.maxGrace;
+    float heartbeatInterval = 0.4f + gracePct * 1.2f; // Fast at low health
+    heartbeatTimer += dt;
+    if (heartbeatTimer >= heartbeatInterval) {
+        PlaySound(sndHeartbeat);
+        heartbeatTimer = 0.0f;
+    }
 
     // Check Win/Loss
     if (guardian.grace.load() <= 0) currentState = STATE_DESOLATION;
@@ -1956,21 +2268,33 @@ void DrawFrame() {
             }
         }
         
+        if (guardian.isRebuking) {
+            float p = 1.0f - (guardian.rebukeTimer / guardian.rebukeDuration);
+            Color rebukeCol = ColorLerp(GOLD, WHITE, p);
+            DrawCircle3D(guardian.pos, guardian.rebukeRadius * p, {0,1,0}, 90.0f, Fade(rebukeCol, 0.6f * (1.0f - p)));
+            DrawSphere(guardian.pos, guardian.rebukeRadius * 0.8f * p, Fade(rebukeCol, 0.2f * (1.0f - p)));
+        }
+
         if (guardian.isShielding) {
             rlPushMatrix();
-            rlTranslatef(guardian.pos.x, 2.0f, guardian.pos.z);
-            rlRotatef(-guardian.facingAngle * RAD2DEG - 90, 0, 1, 0);
+            rlTranslatef(guardian.pos.x, 2.5f, guardian.pos.z);
+            rlRotatef(guardian.facingAngle * RAD2DEG, 0, 1, 0);
             
-            Color shieldCol = (guardian.shieldTimer < PARRY_WINDOW) ? WHITE : COL_SPIRIT;
-            // Shield "Shell"
-            DrawCylinderEx({0,0,0}, {0,0,0}, 4.5f, 4.5f, 16, Fade(shieldCol, 0.12f)); 
+            float shieldPulse = 1.0f + 0.1f * sinf(GetTime() * 15.0f);
+            Color shieldCol = (guardian.shieldTimer < guardian.parryWindow) ? WHITE : GOLD;
+            if (guardian.canGuardCounter) shieldCol = ORANGE;
+
+            // Bulwark of Providence: Holographic Greatshield
+            // Outer Frame (Now correctly aligned to the facing direction)
+            DrawCubeWires({0,0,3.5f}, 6.0f * shieldPulse, 8.0f * shieldPulse, 0.2f, shieldCol);
+            // Inner Energy Surface
+            DrawCube({0,0,3.5f}, 5.8f * shieldPulse, 7.8f * shieldPulse, 0.1f, Fade(shieldCol, 0.25f));
             
-            Vector3 left = {cosf(-SHIELD_ARC/2), 0, sinf(-SHIELD_ARC/2)};
-            Vector3 right = {cosf(SHIELD_ARC/2), 0, sinf(SHIELD_ARC/2)};
-            DrawLine3D({0,0,0}, Vector3Scale(left, 5.0f), shieldCol);
-            DrawLine3D({0,0,0}, Vector3Scale(right, 5.0f), shieldCol);
-            DrawSphere({0,0,3.2f}, 0.7f, shieldCol);
-            DrawSphere({0,0,3.2f}, 1.4f, Fade(shieldCol, 0.2f)); 
+            // Sacred Runes / Details
+            for(int i=0; i<3; i++) {
+                DrawCube({0.0f, (float)i*2.0f-2.0f, 3.6f}, 4.0f, 0.2f, 0.05f, shieldCol);
+            }
+            DrawSphere({0,0,3.6f}, 0.8f, Fade(shieldCol, 0.8f));
             
             rlPopMatrix();
         }
@@ -2032,25 +2356,61 @@ void DrawFrame() {
                     vCol = Fade(GRAY, 0.6f);
                 }
 
-                DrawDivineMesh(sphereMesh, drawPos, {v.scale, v.scale, v.scale}, vCol, 0.6f);
+                DrawDivineMesh(knotMesh, drawPos, {v.scale, v.scale, v.scale}, vCol, 0.6f);
                 
                 // Orbiting Great Shards
                 for (int i=0; i<5; i++) {
                     float t = GetTime() * 2.0f + i * 2.0f;
-                    Vector3 offset = {sinf(t)*v.scale*1.5f, cosf(t*0.7f)*v.scale*1.5f, cosf(t)*v.scale*1.5f};
-                    DrawDivineMesh(polyMesh, Vector3Add(drawPos, offset), {v.scale*0.4f, v.scale*0.4f, v.scale*0.4f}, vCol, 0.4f);
+                    Vector3 offset = {sinf(t)*v.scale*1.8f, cosf(t*0.7f)*v.scale*1.8f, cosf(t)*v.scale*1.8f};
+                    DrawDivineMesh(polyMesh, Vector3Add(drawPos, offset), {v.scale*0.5f, v.scale*0.5f, v.scale*0.5f}, vCol, 0.4f);
                 }
-                
-                DrawSphere(drawPos, v.scale * 2.2f, Fade(vCol, 0.15f)); 
+                DrawSphere(drawPos, v.scale * 2.5f, Fade(vCol, 0.1f)); 
             } else {
-                // Regular Vice: Floating Shards
-                DrawDivineMesh(sphereMesh, v.pos, {v.scale * 0.8f, v.scale * 0.8f, v.scale * 0.8f}, vCol, 0.4f);
-                
-                // 3 Orbiting Shards
-                for (int i=0; i<3; i++) {
-                    float t = GetTime() * 3.0f + i * (2*PI/3);
-                    Vector3 offset = {sinf(t)*v.scale, sinf(t*2.0f)*v.scale*0.5f, cosf(t)*v.scale};
-                    DrawDivineMesh(polyMesh, Vector3Add(v.pos, offset), {v.scale*0.3f, v.scale*0.3f, v.scale*0.3f}, vCol, 0.4f);
+                // Unique Silhouettes for regular Vices
+                if (v.type == WHISPERER) {
+                    DrawDivineMesh(polyMesh, v.pos, {v.scale, v.scale, v.scale}, vCol, 0.3f);
+                    rlPushMatrix();
+                    rlTranslatef(v.pos.x, v.pos.y, v.pos.z);
+                    rlRotatef(GetTime()*100, 0, 1, 0);
+                    DrawDivineMesh(polyMesh, {0,0,0}, {v.scale*0.8f, v.scale*1.2f, v.scale*0.8f}, vCol, 0.2f);
+                    rlPopMatrix();
+                } else if (v.type == ACCUSER) {
+                    DrawDivineMesh(cubeMesh, v.pos, {v.scale, v.scale, v.scale}, vCol, 0.1f);
+                    // Two Halos
+                    rlPushMatrix();
+                    rlTranslatef(v.pos.x, v.pos.y, v.pos.z);
+                    rlRotatef(GetTime()*50, 0, 1, 0);
+                    DrawDivineMesh(torusMesh, {0,0,0}, {v.scale*1.2f, v.scale*1.2f, v.scale*1.2f}, WHITE, 0.0f);
+                    rlRotatef(90, 1, 0, 0);
+                    DrawDivineMesh(torusMesh, {0,0,0}, {v.scale*1.1f, v.scale*1.1f, v.scale*1.1f}, vCol, 0.0f);
+                    rlPopMatrix();
+                } else if (v.type == RAGER) {
+                    DrawDivineMesh(knotMesh, v.pos, {v.scale*0.7f, v.scale*0.7f, v.scale*0.7f}, vCol, 0.5f);
+                } else if (v.type == SLOTH) {
+                    rlPushMatrix();
+                    rlTranslatef(v.pos.x, v.pos.y, v.pos.z);
+                    rlRotatef(90, 1, 0, 0);
+                    DrawDivineMesh(torusMesh, {0,0,0}, {v.scale*1.5f, v.scale*1.5f, v.scale*1.5f}, vCol, 0.1f);
+                    rlPopMatrix();
+                    for(int i=0; i<3; i++) {
+                        float t = GetTime() + i;
+                        Vector3 off = {cosf(t)*v.scale*0.5f, sinf(t)*v.scale*0.5f, 0};
+                        DrawDivineMesh(cubeMesh, Vector3Add(v.pos, off), {v.scale*0.3f, v.scale*0.3f, v.scale*0.3f}, vCol, 0.2f);
+                    }
+                } else if (v.type == GLUTTON) {
+                    DrawDivineMesh(sphereMesh, v.pos, {v.scale, v.scale, v.scale}, vCol, 0.2f);
+                    // Cage of shards
+                    for(int i=0; i<6; i++) {
+                        float a = (float)i/6.0f * 2*PI + GetTime();
+                        Vector3 off = {cosf(a)*v.scale*1.3f, 0, sinf(a)*v.scale*1.3f};
+                        DrawDivineMesh(polyMesh, Vector3Add(v.pos, off), {v.scale*0.3f, v.scale*0.3f, v.scale*0.3f}, vCol, 0.4f);
+                    }
+                } else if (v.type == LUST) {
+                    for(int i=0; i<4; i++) {
+                        float t = GetTime() * 5.0f + i * 1.5f;
+                        Vector3 off = {sinf(t)*v.scale, cosf(t*1.3f)*v.scale, sinf(t*0.7f)*v.scale};
+                        DrawDivineMesh(polyMesh, Vector3Add(v.pos, off), {v.scale*0.4f, v.scale*0.4f, v.scale*0.4f}, vCol, 0.5f);
+                    }
                 }
             }
             
@@ -2229,24 +2589,24 @@ void DrawFrame() {
         DrawText(TextFormat("DIVINE GIFTS (%d SPIRIT POINTS)", guardian.spiritPoints), pX + 20, pY + 15, 24, GOLD);
         
         // Column 1
-        DrawText("1. PRUDENCE (+18% Vision)", pX + 30, pY + 60, 18, SKYBLUE);
-        DrawText("   Widen your divine defense window.", pX + 30, pY + 80, 14, LIGHTGRAY);
+        DrawText("1. PRUDENCE (+18% Parry Window)", pX + 30, pY + 60, 18, SKYBLUE);
+        DrawText("   Widen your soul's vision to reflect thorns of doubt.", pX + 30, pY + 80, 14, LIGHTGRAY);
         
-        DrawText("2. JUSTICE (+40% Speed)", pX + 30, pY + 110, 18, GOLD);
-        DrawText("   Overwhelming force for Truth.", pX + 30, pY + 130, 14, LIGHTGRAY);
+        DrawText("2. JUSTICE (+40% Reflection Power)", pX + 30, pY + 110, 18, GOLD);
+        DrawText("   Sanctified Truths fly faster and redeem with force.", pX + 30, pY + 130, 14, LIGHTGRAY);
         
-        DrawText("3. TEMPERANCE (+50 Love)", pX + 30, pY + 160, 18, PINK);
-        DrawText("   Deepen your heart's capacity.", pX + 30, pY + 180, 14, LIGHTGRAY);
+        DrawText("3. TEMPERANCE (+50 Max Love)", pX + 30, pY + 160, 18, PINK);
+        DrawText("   Deepen your heart's ability to remain in the Father's embrace.", pX + 30, pY + 180, 14, LIGHTGRAY);
 
         // Column 2
-        DrawText("4. FORTITUDE (+20% Acceleration)", pX + 380, pY + 60, 18, WHITE);
-        DrawText("   Move faster, dash for less Spirit.", pX + 380, pY + 80, 14, LIGHTGRAY);
+        DrawText("4. FORTITUDE (+20% Speed & -20% Dash)", pX + 380, pY + 60, 18, WHITE);
+        DrawText("   Move with the speed of light and dash through the storm.", pX + 380, pY + 80, 14, LIGHTGRAY);
         
         DrawText("5. WISDOM (+25% Joy Gain)", pX + 380, pY + 110, 18, LIME);
-        DrawText("   Grow faster from every redemption.", pX + 380, pY + 130, 14, LIGHTGRAY);
+        DrawText("   Gain deeper insight from every act of redemption.", pX + 380, pY + 130, 14, LIGHTGRAY);
         
         DrawText("6. COUNSEL (+30% Praise Gain)", pX + 380, pY + 160, 18, ORANGE);
-        DrawText("   The Holy Spirit's fire burns brighter.", pX + 380, pY + 180, 14, LIGHTGRAY);
+        DrawText("   The Holy Spirit's fire burns brighter, fueling your Canticles.", pX + 380, pY + 180, 14, LIGHTGRAY);
     }
 
     // Active Blessings List

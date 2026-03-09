@@ -1,0 +1,263 @@
+        futures.push_back(g_pool->enqueue([start, endd, dt, t, &threadTemps, &threadMotes]() {
+            for (size_t i = start; i < endd; ++i) {
+                Vice& v = vices[i];
+                if (v.redeemed) {
+                    v.pos.y += 5.0f * dt; // Ascend
+                    continue;
+                }
+                
+                if (v.stunned) {
+                    v.stunTimer -= dt;
+                    if (v.stunTimer <= 0) v.stunned = false;
+                } else {
+                    // Auto-Redemption check (Fixes debug K and edge cases)
+                    if (v.corruption <= 0 && !v.redeemed) {
+                        bool alreadyRedeemed = v.redeemed.exchange(true);
+                        if (!alreadyRedeemed) {
+                            guardian.merit.fetch_add(100);
+                            PlaySound(sndViceRedeemed);
+                            SpawnMotes(v.pos, GOLD, 50, 10.0f, MOTE_SPARK, &threadMotes[t]);
+                        }
+                    }
+
+                    // Censer Swing Interaction
+                    if (guardian.isSwinging) {
+                        float dist = Vector3Distance(v.pos, guardian.pos);
+                        if (dist < guardian.swingRange + 2.0f) {
+                            Vector3 toVice = Vector3Subtract(v.pos, guardian.pos);
+                            float angleToVice = atan2f(toVice.x, toVice.z);
+                            float angleDiff = fabs(angleToVice - guardian.facingAngle);
+                            while (angleDiff > PI) angleDiff -= 2*PI;
+                            while (angleDiff < -PI) angleDiff += 2*PI;
+
+                            if (fabs(angleDiff) < guardian.swingArc / 2.0f) {
+                                v.corruption.store(v.corruption - 50.0f * dt * 10.0f); // Fast conversion on hit
+                                guardian.fervor.fetch_add((int)(2 * guardian.fervorRegenMult)); // F24: Fervor from hits
+                                SpawnMotes(v.pos, COL_GRACE, 2, 5.0f, MOTE_SPARK, &threadMotes[t]);
+                            }
+                        }
+                    }
+
+                    // Chase behavior (Tactical & Coordinated)
+                    Vector3 toPlayer = Vector3Subtract(guardian.pos, v.pos);
+                    toPlayer.y = 0;
+                    float dist = Vector3Length(toPlayer);
+                    Vector3 dir = Vector3Normalize(toPlayer);
+                    
+                    // 1. Coordinated Formation Target
+                    v.formationAngle += 0.2f * dt; // Slow orbit
+                    float targetDist = (v.type == WHISPERER) ? 30.0f : (v.type == ACCUSER) ? 22.0f : 12.0f;
+                    Vector3 formationOffset = { cosf(v.formationAngle) * targetDist, 0, sinf(v.formationAngle) * targetDist };
+                    Vector3 targetPos = Vector3Add(guardian.pos, formationOffset);
+                    Vector3 formationDir = Vector3Normalize(Vector3Subtract(targetPos, v.pos));
+
+                    // 2. Separation Force (Avoid Clumping)
+                    Vector3 separation = {0,0,0};
+                    for (const auto& other : vices) {
+                        if (&other == &v) continue;
+                        float d = Vector3Distance(v.pos, other.pos);
+                        if (d < 6.0f) {
+                            separation = Vector3Add(separation, Vector3Scale(Vector3Normalize(Vector3Subtract(v.pos, other.pos)), (6.0f - d) * 2.0f));
+                        }
+                    }
+
+                    // 3. Apply Combined Forces
+                    float moveSpeedMult = (v.type == SLOTH) ? 0.5f : (v.type == LUST) ? 1.5f : 1.0f;
+                    Vector3 finalMoveDir = Vector3Normalize(Vector3Add(Vector3Scale(formationDir, 1.0f), Vector3Scale(separation, 1.5f)));
+                    v.pos = Vector3Add(v.pos, Vector3Scale(finalMoveDir, v.moveSpeed * moveSpeedMult * dt));
+
+                    // Strict Boundary Culling (Fix for Ghost Enemies)
+                    if (Vector3Length(v.pos) > 150.0f) {
+                        v.corruption.store(-1.0f); // Force redemption
+                    }
+
+                    // Unique Behaviors
+                    if (v.type == LUST && v.stateTimer <= 0) {
+                        v.stateTimer = 4.0f;
+                        SpawnMotes(v.pos, PINK, 10, 5.0f, MOTE_SPARK, &threadMotes[t]);
+                        float bAng = (float)GetRandomValue(0, 360) * DEG2RAD;
+                        v.pos = Vector3Add(v.pos, {cosf(bAng)*15, 0, sinf(bAng)*15});
+                    }
+
+                    if (v.type == RAGER && dist < 18.0f && guardian.isSwinging) {
+                        // Elite Reflex Dodge (unchanged but faster)
+                        Vector3 dodge = {dir.z, 0, -dir.x};
+                        if (GetRandomValue(0, 1) == 0) dodge = Vector3Negate(dodge);
+                        v.pos = Vector3Add(v.pos, Vector3Scale(dodge, v.moveSpeed * 6.0f * dt));
+                        SpawnMotes(v.pos, currentViceCol, 1, 2.0f, MOTE_SPARK, &threadMotes[t]);
+                    }
+                    
+                    // Attack behavior
+                    v.attackTimer -= dt;
+                    if (v.attackTimer <= 0.0f) {
+                        Vector3 spawnPos = Vector3Add(v.pos, {0, 2.0f, 0}); 
+                        
+                        if (v.type == CARDINAL_SIN) {
+                            // Boss logic handled separately below
+                        } else if (director.attackTokens > 0) {
+                            // Regular Enemy Attack (Consumes Token)
+                            director.attackTokens--;
+                            
+                            if (v.type == WHISPERER) {
+                                // Sacred Geometry: Rose Curve (Floral Pattern)
+                                float k = 3.0f; // 3-petaled rose
+                                float ang = GetTime() * 4.0f;
+                                float r = cosf(k * ang);
+                                Vector3 roseDir = { r * cosf(ang), 0, r * sinf(ang) };
+                                SpawnTemptation(spawnPos, Vector3Scale(roseDir, 22.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                PlaySoundPooled(27, 1.0f, 0.5f); // Projectile Spawn
+                                PlaySound(sndViceWhisper);
+                                v.attackTimer = 0.15f; 
+                            } else if (v.type == SLOTH) {
+                                // Sloth: Heavy Thorns
+                                Vector3 toP = Vector3Normalize(Vector3Subtract(guardian.pos, spawnPos));
+                                SpawnTemptation(spawnPos, Vector3Scale(toP, 10.0f), PURPLE, false, &threadTemps[t]);
+                                PlaySoundPooled(27, 0.7f, 0.5f);
+                                PlaySound(sndViceSloth);
+                                v.attackTimer = 3.5f;
+                            } else if (v.type == GLUTTON) {
+                                // Glutton: Targeted Bursts
+                                Vector3 toP = Vector3Normalize(Vector3Subtract(guardian.pos, spawnPos));
+                                SpawnTemptation(spawnPos, Vector3Scale(toP, 14.0f), ORANGE, false, &threadTemps[t]);
+                                PlaySoundPooled(27, 0.85f, 0.5f);
+                                PlaySound(sndViceGlutton);
+                                v.attackTimer = 1.5f;
+                            } else if (v.type == LUST) {
+                                // Lust: Rapid Flickering Doubts
+                                PlaySound(sndViceLust);
+                                for(int k=0; k<2; k++) {
+                                    Vector3 spread = Vector3RotateByAxisAngle(dir, {0,1,0}, (float)GetRandomValue(-10,10)*0.01f);
+                                    SpawnTemptation(spawnPos, Vector3Scale(spread, 30.0f), PINK, false, &threadTemps[t]);
+                                    PlaySoundPooled(27, 1.2f, 0.5f);
+                                }
+                                v.attackTimer = 0.8f;
+                            } else if (v.type == ACCUSER) {
+                                // Sacred Geometry: Triquetra Spiral
+                                PlaySound(sndViceAccuse);
+                                float ang = GetTime() * 2.5f;
+                                for(int k=0; k<3; k++) {
+                                    float a = ang + k * (2.0f * PI / 3.0f);
+                                    Vector3 triDir = { cosf(a), 0, sinf(a) };
+                                    SpawnTemptation(spawnPos, Vector3Scale(triDir, 18.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                    PlaySoundPooled(27, 1.1f, 0.5f);
+                                }
+                                v.attackTimer = 0.6f;
+                            } else if (v.type == RAGER) {
+                                // Sonic Lunge (Impulse toward player)
+                                PlaySound(sndViceRage);
+                                v.pos = Vector3Add(v.pos, Vector3Scale(dir, 15.0f)); 
+                                SpawnTemptation(spawnPos, Vector3Scale(dir, 32.0f), MAROON, false, &threadTemps[t]);
+                                PlaySoundPooled(27, 0.9f, 0.5f);
+                                v.attackTimer = 2.0f;
+                            }
+                        } else {
+                            v.attackTimer = 0.2f; // Wait for token
+                        }
+                        
+                        // Boss Logic Block
+                        if (v.type == CARDINAL_SIN) {
+                            v.stateTimer -= dt;
+                            Vector3 sPos = Vector3Add(v.pos, {0, 2.0f, 0});
+                            Vector3 toG = Vector3Subtract(guardian.pos, v.pos);
+                            float dToG = Vector3Length(toG);
+                            Vector3 dirToG = Vector3Normalize(toG);
+
+                            if (v.state == VICE_IDLE) {
+                                v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, v.moveSpeed * dt));
+                                if (v.stateTimer <= 0) {
+                                    v.state = VICE_TELEGRAPH;
+                                    v.stateTimer = 0.65f;
+                                    if (dToG < 22.0f) v.patternIndex = (GetRandomValue(0, 10) < 7) ? 2 : GetRandomValue(0, 1);
+                                    else v.patternIndex = GetRandomValue(0, 1);
+                                }
+                            } else if (v.state == VICE_TELEGRAPH) {
+                                v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, v.moveSpeed * 0.3f * dt));
+                                if (v.stateTimer <= 0) {
+                                    v.state = VICE_ATTACK;
+                                    v.stateTimer = (v.patternIndex == 2) ? 0.8f : 2.5f; 
+                                }
+                            } else if (v.state == VICE_ATTACK) {
+                                v.pos = Vector3Add(v.pos, Vector3Scale(dirToG, v.moveSpeed * 0.5f * dt));
+                                v.attackTimer -= dt;
+                                if (v.attackTimer <= 0) {
+                                    PlaySound(sndViceBoss);
+                                    if (vigilCount == 5) { // PRIDE
+                                        if (v.patternIndex == 0) { // Cross Burst
+                                            for (int k = 0; k < 8; k++) {
+                                                float a = k * PI/4 + GetTime() * 2.0f;
+                                                SpawnTemptation(sPos, Vector3Scale({cosf(a), 0, sinf(a)}, 22.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 0.9f, 0.5f);
+                                            }
+                                            v.attackTimer = 0.3f;
+                                        } else if (v.patternIndex == 1) { // Focused Doubts
+                                            for(int k=-3; k<=3; k++) {
+                                                Vector3 spread = Vector3RotateByAxisAngle(dirToG, {0,1,0}, k * 0.12f);
+                                                SpawnTemptation(sPos, Vector3Scale(spread, 28.0f), MAROON, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 1.0f, 0.5f);
+                                            }
+                                            v.attackTimer = 0.12f;
+                                        } else { // MELEE: Divine Rebuke
+                                            for(int k=0; k<48; k++) {
+                                                float a = (float)k/48.0f * PI * 2.0f;
+                                                SpawnTemptation(sPos, Vector3Scale({cosf(a), 0, sinf(a)}, 40.0f), GOLD, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 0.6f, 0.5f);
+                                            }
+                                            v.attackTimer = 0.8f;
+                                            screenShake = 0.5f;
+                                        }
+                                    } else if (vigilCount == 10) { // GREED
+                                        if (v.patternIndex == 0) { 
+                                            for(int k=0; k<25; k++) {
+                                                Vector3 rPos = { guardian.pos.x + GetRandomValue(-40,40), 50.0f, guardian.pos.z + GetRandomValue(-40,40) };
+                                                SpawnTemptation(rPos, {0,-35,0}, GOLD, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 1.2f, 0.5f);
+                                            }
+                                            v.attackTimer = 0.06f;
+                                        } else if (v.patternIndex == 1) { 
+                                            for(int k=0; k<4; k++) {
+                                                float a = GetTime() * 10.0f + k * PI/2;
+                                                SpawnTemptation(sPos, {cosf(a)*20, 0, sinf(a)*20}, GOLD, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 1.1f, 0.5f);
+                                            }
+                                            v.attackTimer = 0.1f;
+                                        } else { 
+                                            for(int k=0; k<15; k++) {
+                                                Vector3 offset = {(float)GetRandomValue(-20,20), 0, (float)GetRandomValue(-20,20)};
+                                                SpawnTemptation(Vector3Add(v.pos, offset), {0, 5, 0}, GOLD, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 0.7f, 0.5f);
+                                            }
+                                            v.attackTimer = 0.05f;
+                                        }
+                                    } else if (vigilCount == 25) { // THE ABSOLUTE
+                                        float hpPct = v.corruption.load() / v.maxCorruption;
+                                        if (hpPct > 0.5f) {
+                                            for (int k = 0; k < 6; k++) {
+                                                float ang = k * PI/3 + GetTime() * 3.0f;
+                                                SpawnTemptation(sPos, Vector3Scale({cosf(ang), 0, sinf(ang)}, 25.0f), COL_TEMPTATION, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 0.9f, 0.5f);
+                                            }
+                                        } else {
+                                            for(int k=0; k<12; k++) {
+                                                float a = (float)k/12.0f * PI * 2.0f + GetTime() * 5.0f;
+                                                SpawnTemptation(sPos, Vector3Scale({cosf(a), 0, sinf(a)}, 30.0f), WHITE, false, &threadTemps[t]);
+                                                PlaySoundPooled(27, 1.2f, 0.5f);
+                                            }
+                                        }
+                                        v.attackTimer = 0.1f;
+                                    }
+                                }
+                                if (v.stateTimer <= 0) {
+                                    v.state = VICE_RECOVER;
+                                    v.stateTimer = 0.85f;
+                                }
+                            } else if (v.state == VICE_RECOVER) {
+                                if (v.stateTimer <= 0) {
+                                    v.state = VICE_IDLE;
+                                    v.stateTimer = 0.5f;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }));

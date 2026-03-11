@@ -502,6 +502,7 @@ struct Guardian {
     float parryWindow = 0.22f;
     float mercyRadius = 14.0f;
     float truthSpeedMult = 1.0f;
+    float reflectionPowerMult = 1.0f;
     float meritMult = 1.0f;
     float fervorRegenMult = 1.0f;
     float dashCostMult = 1.0f;
@@ -589,6 +590,7 @@ struct Guardian {
         parryWindow = 0.22f;
         mercyRadius = 14.0f;
         truthSpeedMult = 1.0f;
+        reflectionPowerMult = 1.0f;
         meritMult = 1.0f;
         fervorRegenMult = 1.0f;
         dashCostMult = 1.0f;
@@ -984,7 +986,9 @@ void UpdateGuardian(float dt) {
             SpawnMotes(guardian.pos, WHITE, 30, 12.0f);
             PlaySound(sndBlessing);
         } else if (IsKeyPressed(KEY_TWO)) {
-            guardian.truthSpeedMult += 0.40f; guardian.spiritPoints--; guardian.haloScale += 0.2f;
+            guardian.truthSpeedMult += 0.40f; 
+            guardian.reflectionPowerMult += 0.40f; 
+            guardian.spiritPoints--; guardian.haloScale += 0.2f;
             SpawnMotes(guardian.pos, GOLD, 30, 12.0f);
             PlaySound(sndBlessing);
         } else if (IsKeyPressed(KEY_THREE)) {
@@ -1096,7 +1100,7 @@ void UpdateGuardian(float dt) {
             v.corruption.store(v.corruption - 500.0f);
             if (v.corruption <= 0 && !v.redeemed) {
                 v.redeemed = true;
-                guardian.merit.fetch_add(100);
+                guardian.merit.fetch_add((int)(100 * guardian.meritMult));
             }
         }
     }
@@ -1633,7 +1637,7 @@ void UpdateVices(float dt) {
     
     for (auto& v : vices) {
         if (v.corruption.load() <= 0 && !v.redeemed) {
-            v.redeemed.store(true); guardian.merit.fetch_add(100);
+            v.redeemed.store(true); guardian.merit.fetch_add((int)(100 * guardian.meritMult));
         }
     }
     
@@ -1710,7 +1714,7 @@ void UpdateTemptations(float dt) {
                     for (auto& v : vices) {
                         if (v.redeemed) continue;
                         if (Vector3Distance(temp.pos, v.pos) < v.scale * 2.0f) {
-                            v.corruption.store(v.corruption - 35.0f); 
+                            v.corruption.store(v.corruption - 35.0f * guardian.reflectionPowerMult); 
                             temp.life = 0; 
                             SpawnMotes(temp.pos, COL_SPIRIT, 15, 8.0f, MOTE_SPARK, &threadMotes[t]);
                             
